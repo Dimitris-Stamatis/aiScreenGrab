@@ -1,0 +1,16 @@
+{
+    "manifest_version": 3,
+    "name": "Tab Streamer",
+    "version": "1.0",
+    "description": "Stream tab content as video to another tab",
+    "permissions": [
+        "desktopCapture"
+    ],
+    "background": {
+        "service_worker": "service_worker.js",
+        "type": "module"
+    },
+    "action": {
+        "default_popup": "popup.html"
+    }
+}

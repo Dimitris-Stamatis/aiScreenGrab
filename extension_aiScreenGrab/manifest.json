@@ -4,7 +4,8 @@
     "version": "1.0",
     "description": "Stream tab content as video to another tab",
     "permissions": [
-        "desktopCapture"
+        "desktopCapture",
+        "tabs"
     ],
     "background": {
         "service_worker": "service_worker.js",

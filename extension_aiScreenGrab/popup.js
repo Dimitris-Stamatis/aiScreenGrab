@@ -1,19 +1,20 @@
-document.getElementById('startCapture').addEventListener('click', async () => {
-    try {
-        chrome.desktopCapture.chooseDesktopMedia(['screen', 'window', 'tab'], (streamId) => {
-            if (streamId == '')
-                return;
-            chrome.tabs.create({ url: "https://your-client-website.com" }, (tab) => {
-                chrome.tabs.onUpdated.addListener(function listener(tabId, changeInfo) {
-                    if (tabId === tab.id && changeInfo.status === 'complete') {
-                        // Send the stream ID to the client website
-                        chrome.tabs.sendMessage(tabId, { type: 'streamId', streamId: streamId });
-                        chrome.tabs.onUpdated.removeListener(listener);
-                    }
-                });
-            });
-        });
-    } catch (err) {
-        console.error("Error starting capture: " + err);
-    }
-});
+document.getElementById('startCapture').addEventListener('click', () => {
+    chrome.runtime.sendMessage({ type: 'startCapture' }, (response) => {
+      if (response.success) {
+        console.log('Capture started');
+      } else {
+        console.error('Failed to start capture:', response.error);
+      }
+    });
+  });
+  
+  document.getElementById('stopCapture').addEventListener('click', () => {
+    chrome.runtime.sendMessage({ type: 'stopCapture' }, (response) => {
+      if (response.success) {
+        console.log('Capture stopped');
+      } else {
+        console.error('Failed to stop capture:', response.error);
+      }
+    });
+  });
+  

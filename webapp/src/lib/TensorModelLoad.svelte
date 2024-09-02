@@ -165,30 +165,39 @@
   }
 
   function handleMouseDown(event: MouseEvent) {
-    // Start dragging logic
-    const startX = event.clientX;
-    const startY = event.clientY;
+  // Start dragging logic
+  const startX = event.clientX;
+  const startY = event.clientY;
 
-    function handleMouseMove(event: MouseEvent) {
-      const deltaX = event.clientX - startX;
-      const deltaY = event.clientY - startY;
-      rectX += deltaX;
-      rectY += deltaY;
-      rect.style.left = `${rectX}px`;
-      rect.style.top = `${rectY}px`;
-      rect.style.width = `${rectWidth}px`;
-      rect.style.height = `${rectHeight}px`;
-      event.preventDefault();
-    }
+  // Calculate initial rectangle position relative to mouse position
+  const rectRect = rect.getBoundingClientRect();
+  const offsetX = startX - rectRect.left;
+  const offsetY = startY - rectRect.top;
 
-    function handleMouseUp() {
-      document.removeEventListener("mousemove", handleMouseMove);
-      document.removeEventListener("mouseup", handleMouseUp);
-    }
+  function handleMouseMove(event: MouseEvent) {
+    // Update rectangle position based on current mouse position
+    const newX = event.clientX - offsetX;
+    const newY = event.clientY - offsetY;
 
-    document.addEventListener("mousemove", handleMouseMove);
-    document.addEventListener("mouseup", handleMouseUp);
+    // Apply new position
+    rect.style.left = `${newX}px`;
+    rect.style.top = `${newY}px`;
+    rect.style.width = `${rectWidth}px`;
+    rect.style.height = `${rectHeight}px`;
+    
+    event.preventDefault();
   }
+
+  function handleMouseUp() {
+    // Remove event listeners when mouse button is released
+    document.removeEventListener("mousemove", handleMouseMove);
+    document.removeEventListener("mouseup", handleMouseUp);
+  }
+
+  // Add event listeners for mouse movement and release
+  document.addEventListener("mousemove", handleMouseMove);
+  document.addEventListener("mouseup", handleMouseUp);
+}
 
   stream.subscribe((value) => {
     if (value) {

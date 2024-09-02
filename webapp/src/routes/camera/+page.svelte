@@ -1,13 +1,19 @@
 <script lang="ts">
-  import CameraFeed from "$lib/CameraFeed.svelte";
-  import ScreenShare from "$lib/ScreenShare.svelte";
+  import StreamHandler from "$lib/StreamHandler.svelte";
+  import { modelStore } from "../../stores";
 
-  let showCamera = true;
+  $: showCamera = true;
   let showFeed = false;
+
+  if ( $modelStore.modelFiles.length === 0 ) {
+    alert("Please upload a model file first.");
+    location.href = "/model-setup";
+  }
+
 </script>
 
 <div>
-  <button on:click={() => (showCamera = !showCamera)}>
+  <button on:click={() => {showCamera = !showCamera; showFeed = true;}}>
     {showCamera ? "Switch to Screen Share" : "Switch to Camera"}
   </button>
   <button on:click={() => (showFeed = !showFeed)}>
@@ -15,9 +21,9 @@
   </button>
   {#if showFeed}
     {#if showCamera}
-      <CameraFeed />
+      <StreamHandler type="camera" />
     {:else}
-      <ScreenShare />
+      <StreamHandler type="screen" />
     {/if}
   {/if}
 </div>

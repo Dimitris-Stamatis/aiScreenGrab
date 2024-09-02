@@ -1,6 +1,7 @@
-import { build, files, version } from '$service-worker';
+/*import { build, files, version } from '$service-worker';
 //importScripts('https://cdn.jsdelivr.net/npm/@tensorflow/tfjs');
 import * as tf from 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs';
+//import * as tf from '@tensorflow/tfjs';
 
 const CACHE = `sw-v${version}`;
 
@@ -51,4 +52,4 @@ function formatPredictions(prediction) {
     { x: 100, y: 150, width: 200, height: 100, label: 'Object 1' },
     { x: 300, y: 250, width: 100, height: 200, label: 'Object 2' }
     ];
-}
+}*/

@@ -1,146 +1,265 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
-  import * as tf from '@tensorflow/tfjs';
+  import { onDestroy } from "svelte";
+  import { modelStore, stream } from "../stores";
+  import * as tf from "@tensorflow/tfjs";
+  import { getAllFiles } from "../utils/indexedDB";
 
-  export let stream: MediaStream;
+  let model: tf.GraphModel | null = null;
+  let modelLoaded = false;
+  let inW: number, inH: number, outW: number, outH: number;
+  let labels: string[] = [];
+  let results: { label: any; probability: number }[] | undefined = [];
   let videoElement: HTMLVideoElement;
-  let worker: Worker;
-  let cropRegion = { x: 0, y: 0, width: 0, height: 0 };
-  let model: tf.GraphModel;
+  let canvas: HTMLCanvasElement;
+  let rect: HTMLDivElement;
+  const dimensionsIn = $modelStore.modelParameters.inputShape;
+  [inW, inH] = dimensionsIn.split("x").map(Number);
+  const dimensionsOut = $modelStore.modelParameters.outputShape;
+  [outW, outH] = dimensionsOut.split("x").map(Number);
 
-  onMount(() => {
-    videoElement.srcObject = stream;
-    videoElement.play();
-    
-    worker = new Worker('service-worker.js');
+  let rectX = 50, rectY = 50, rectWidth = inW, rectHeight = inH; // Initial rectangle dimensions
 
-    worker.onmessage = (e) => {
-      if (e.data.status === 'modelLoaded') {
-        console.log('Model loaded successfully in worker');
-      } else if (e.data.status === 'prediction') {
-        console.log('Prediction result:', e.data.data);
+  // Custom TensorFlow.js I/O handler for IndexedDB
+  const indexedDBIOHandler: tf.io.IOHandler = {
+    async load() {
+      const files = await getAllFiles();
+      const modelJsonFile = files.find((file) =>
+        file.name.endsWith("model.json")
+      );
+      const weightFiles = files.filter((file) => file.name.endsWith(".bin"));
+      const labelsFile = files.find((file) => file.name.endsWith("labels.json"));
+
+      if (!modelJsonFile) {
+        throw new Error("Model JSON file not found in IndexedDB.");
       }
+
+      // Read and log model.json file content
+      const modelJsonContent = await fileToString(modelJsonFile);
+      console.log("Model JSON Content:", modelJsonContent);
+
+      let modelJson;
+      try {
+        modelJson = JSON.parse(modelJsonContent);
+      } catch (error) {
+        console.error("Error parsing model JSON:", error);
+        throw new Error("Invalid JSON in model.json");
+      }
+
+      if (labelsFile) {
+        const labelsText = await fileToString(labelsFile);
+        console.log("Labels JSON Content:", labelsText);
+        try {
+          labels = JSON.parse(labelsText);
+        } catch (error) {
+          console.error("Error parsing labels JSON:", error);
+          throw new Error("Invalid JSON in labels.json");
+        }
+      }
+
+      const weightData = await concatenateArrayBuffers(weightFiles);
+
+      return {
+        modelTopology: modelJson.modelTopology,
+        weightSpecs: modelJson.weightsManifest[0].weights,
+        weightData: weightData,
+      };
+    },
+  };
+
+  async function fileToString(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = () => reject(reader.error);
+      reader.readAsText(file);
+    });
+  }
+
+  async function fileToArrayBuffer(file: File): Promise<ArrayBuffer> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as ArrayBuffer);
+      reader.onerror = () => reject(reader.error);
+      reader.readAsArrayBuffer(file);
+    });
+  }
+
+  async function concatenateArrayBuffers(files: File[]): Promise<Uint8Array> {
+    const buffers = await Promise.all(files.map(fileToArrayBuffer));
+    const totalLength = buffers.reduce((acc, buffer) => acc + buffer.byteLength, 0);
+    const concatenatedArray = new Uint8Array(totalLength);
+    let offset = 0;
+
+    for (const buffer of buffers) {
+      concatenatedArray.set(new Uint8Array(buffer), offset);
+      offset += buffer.byteLength;
+    }
+
+    return concatenatedArray;
+  }
+
+  async function loadModel() {
+    try {
+      model = await tf.loadGraphModel(indexedDBIOHandler);
+      modelLoaded = true;
+    } catch (error) {
+      console.error("Error loading model:", error);
+    }
+  }
+
+  async function predict(image: HTMLImageElement) {
+    if (!model) {
+      console.error("Model not loaded.");
+      return;
+    }
+
+    // Adjust prediction area based on the rectangle
+    const tensor = tf.browser
+      .fromPixels(image)
+      .slice([rectY, rectX, 0], [rectHeight, rectWidth, 3]) // Use slice to crop the image
+      .resizeNearestNeighbor([inW, inH])
+      .toFloat()
+      .expandDims();
+
+    const predictions = model.predict(tensor) as tf.Tensor;
+    const data = await predictions.data();
+    results = Array.from(data).map((probability, index) => ({
+      label: labels[index] || `Class ${index}`,
+      probability,
+    }));
+
+    results.sort((a, b) => b.probability - a.probability);
+
+    tensor.dispose();
+    return results;
+  }
+
+  function processFrame() {
+    if (!modelLoaded) {
+      return;
+    }
+
+    const context = canvas.getContext("2d");
+
+    if (!videoElement || !context) {
+      console.error("Video or canvas context not available.");
+      return;
+    }
+
+    if (videoElement.readyState < 2) {
+      console.warn("Video is not ready for processing.");
+      requestAnimationFrame(processFrame);
+      return;
+    }
+
+    canvas.width = inW;
+    canvas.height = inH;
+    context.drawImage(videoElement, 0, 0, inW, inH);
+
+    const image = new Image();
+    image.onload = async () => {
+      results = await predict(image);
+      requestAnimationFrame(processFrame); // Continue processing frames
     };
+    image.src = canvas.toDataURL();
+  }
+
+  function handleMouseDown(event: MouseEvent) {
+    // Start dragging logic
+    const startX = event.clientX;
+    const startY = event.clientY;
+
+    function handleMouseMove(event: MouseEvent) {
+      const deltaX = event.clientX - startX;
+      const deltaY = event.clientY - startY;
+      rectX += deltaX;
+      rectY += deltaY;
+      rect.style.left = `${rectX}px`;
+      rect.style.top = `${rectY}px`;
+      rect.style.width = `${rectWidth}px`;
+      rect.style.height = `${rectHeight}px`;
+      event.preventDefault();
+    }
+
+    function handleMouseUp() {
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+    }
+
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", handleMouseUp);
+  }
+
+  stream.subscribe((value) => {
+    if (value) {
+      videoElement.srcObject = value;
+      videoElement.play();
+    }
+    processFrame(); // Start processing frames
   });
 
-  async function handleModelUpload(event: Event) {
-    const files = (event.target as HTMLInputElement).files;
-    if (!files || files.length === 0) {
-      alert('Please upload model files (model.json and .bin files).');
-      return;
-    }
+  loadModel();
 
-    // Create an in-memory file mapping for the uploaded files
-    const fileMap = new Map<string, File>();
-    for (const file of files) {
-      fileMap.set(file.name, file);
-    }
-
-    // Find and load the model.json file
-    const modelFile = fileMap.get('model.json');
-    if (!modelFile) {
-      alert('model.json file not found. Please upload the correct files.');
-      return;
-    }
-
-    // Create a custom I/O handler for loading the model
-    const customLoader = {
-      async load() {
-        const modelJson = JSON.parse(await modelFile.text());
-
-        const weightDataPromises = modelJson.weightsManifest[0].paths.map(async (path: string) => {
-          const weightFileName = path.split('/').pop();
-          console.log(weightFileName);
-          if (!weightFileName) {
-            throw new Error(`Invalid weight file path: ${path}`);
-          }
-          const weightFile = fileMap.get(weightFileName);
-          if (!weightFile) {
-            throw new Error(`Weight file ${weightFileName} not found.`);
-          }
-          return new Uint8Array(await weightFile.arrayBuffer());
-        });
-
-        const weightDataArray = await Promise.all(weightDataPromises);
-        const weightData = weightDataArray.reduce((acc, val) => {
-          const mergedArray = new Uint8Array(acc.byteLength + val.byteLength);
-          mergedArray.set(new Uint8Array(acc), 0);
-          mergedArray.set(new Uint8Array(val), acc.byteLength);
-          return mergedArray.buffer;
-        });
-
-        const ret = {
-          modelTopology: modelJson.modelTopology,
-          weightSpecs: modelJson.weightsManifest[0].weights,
-          weightData: weightData
-        };
-        console.log(ret);
-        return ret;
-      }
-    };
-
-    try {
-      // Load the model using the custom loader
-      model = await tf.loadGraphModel(customLoader);
-      console.log('Model loaded successfully');
-
-      startProcessing();
-    } catch (error) {
-      console.error('Error loading model:', error);
-      alert('Error loading model. Please check the files and try again.');
-    }
-  }
-
-  function startProcessing() {
-    videoElement.requestVideoFrameCallback(processFrame);
-  }
-
-  async function processFrame(now: DOMHighResTimeStamp, metadata: any) {
-    const canvas = document.createElement('canvas');
-    const ctx: CanvasRenderingContext2D | null = canvas.getContext('2d');
-
-    canvas.width = cropRegion.width;
-    canvas.height = cropRegion.height;
-
-    ctx?.drawImage(
-      videoElement,
-      cropRegion.x,
-      cropRegion.y,
-      cropRegion.width,
-      cropRegion.height,
-      0,
-      0,
-      cropRegion.width,
-      cropRegion.height
-    );
-
-    const imageTensor = tf.browser.fromPixels(canvas);
-    const preprocessedImage = preprocessImage(imageTensor);
-
-    // Run prediction with the loaded model
-    const prediction = model.predict(preprocessedImage);
-
-    console.log('Prediction result:', await prediction);
-
-    // Continue the frame processing
-    videoElement.requestVideoFrameCallback(processFrame);
-  }
-
-  function preprocessImage(imageTensor: tf.Tensor3D) {
-    // Adjust preprocessing as needed (resize, normalize, etc.)
-    return imageTensor.expandDims(0);
-  }
+  onDestroy(() => {
+    model?.dispose();
+  });
 </script>
 
-<!-- Updated file input to accept both model.json and .bin files -->
-<input type="file" accept=".json,.bin,.config" multiple on:change={handleModelUpload} />
-<!-- svelte-ignore a11y_media_has_caption -->
-<video bind:this={videoElement} autoplay></video>
+<div class="videoContainer" >
+  <video bind:this={videoElement} autoplay muted playsinline></video>
+  <canvas bind:this={canvas} id="output"></canvas>
+  <div class="rectangle" bind:this={rect} on:mousedown={handleMouseDown} aria-hidden="true"></div>
+</div>
+
+{#if modelLoaded}
+  <p>Model loaded successfully!</p>
+{:else}
+  <p>Loading model...</p>
+{/if}
+
+<div class="results">
+  {#if results && results.length > 0}
+    {#each results as result}
+      <p>{result.label}: {result.probability.toFixed(2)}</p>
+    {/each}
+  {/if}
+</div>
 
 <style>
-  video {
-    width: 100%;
-    height: auto;
-    border-radius: 8px;
-  }
+.videoContainer {
+  position: relative;
+  width: 640px; /* Adjust as needed */
+  height: 480px; /* Adjust as needed */
+}
+
+.videoContainer video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.videoContainer canvas#output {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.rectangle {
+  position: absolute;
+  border: 2px solid red; /* Color and style of the rectangle border */
+  background-color: rgba(255, 0, 0, 0.3); /* Background color with transparency */
+  cursor: move; /* Cursor style when hovering over the rectangle */
+}
+
+.results {
+  margin-top: 10px;
+  padding: 10px;
+}
+
+.results p {
+  margin: 0;
+}
+
 </style>

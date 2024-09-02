@@ -1,15 +1,15 @@
 <script lang="ts">
   import StreamHandler from "$lib/StreamHandler.svelte";
+    import TensorModelLoad from "$lib/TensorModelLoad.svelte";
   import { modelStore } from "../../stores";
 
   $: showCamera = true;
   let showFeed = false;
 
-  if ( $modelStore.modelFiles.length === 0 ) {
+  if ( typeof window !== "undefined" && $modelStore.modelFiles.length === 0 ) {
     alert("Please upload a model file first.");
     location.href = "/model-setup";
   }
-
 </script>
 
 <div>
@@ -26,4 +26,21 @@
       <StreamHandler type="screen" />
     {/if}
   {/if}
+  <TensorModelLoad />
 </div>
+
+<style>
+  button {
+    margin: 10px;
+    padding: 8px 16px;
+    border: none;
+    border-radius: 4px;
+    background-color: #007bff;
+    color: #fff;
+    cursor: pointer;
+  }
+
+  button:hover {
+    background-color: #0056b3;
+  }
+</style>

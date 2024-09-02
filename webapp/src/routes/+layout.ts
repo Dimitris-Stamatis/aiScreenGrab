@@ -3,7 +3,7 @@ import type { LayoutLoad } from "./$types";
 const menuData = {
     sections: [
         { name: 'Home', url: '/' },
-        { name: 'About', url: '/about' },
+        //{ name: 'About', url: '/about' },
         { name: 'Camera', url: '/camera' },
     ]
 };

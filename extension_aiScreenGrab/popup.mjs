@@ -36,13 +36,7 @@ document.getElementById('modelDetails').addEventListener('submit', (e) => {
 });
 
 drawbutton.addEventListener('click', () => {
-  chrome.runtime.sendMessage({ type: 'startDrawing' }, (response) => {
-    if (response.success) {
-      console.log('Capture started');
-    } else {
-      console.error('Failed to start capture:', response.error);
-    }
-  });
+  chrome.runtime.sendMessage({ type: 'startDrawing' }, (response) => {});
 });
 
 chrome.storage.sync.get('modelDetails', ({ modelDetails }) => {

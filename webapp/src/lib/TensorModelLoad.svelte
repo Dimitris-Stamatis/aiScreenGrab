@@ -22,8 +22,8 @@
     [outW, outH] = dimensionsOut.split("x").map(Number);
 
 
-    let rectX = 50,
-        rectY = 50; // Rectangle position fixed for simplicity
+    let rectX = 0,
+        rectY = 0; // Rectangle position fixed for simplicity
     let rectWidth = inW,
         rectHeight = inH; // Rectangle dimensions from model store
     let videoScaleX = 1, videoScaleY = 1;
@@ -34,6 +34,10 @@
             videoScaleX = videoElement.clientWidth / videoElement.videoWidth;
             videoScaleY = videoElement.clientHeight / videoElement.videoHeight;
         }
+        rectX = videoElement.clientWidth / 2 - inW / 2;
+        rectY = videoElement.clientHeight / 2 - inH / 2;
+        rectWidth = inW;
+        rectHeight = inH;
     }
 
     // Custom TensorFlow.js I/O handler for IndexedDB
@@ -133,29 +137,31 @@
             return;
         }
 
+        const logits = tf.tidy(() => {
+
         const tensor = tf.browser
             .fromPixels(imageData)
-            .resizeBilinear([inH, inW]) // Resize to model's input size
-            .toFloat()
-            .expandDims();
+            .resizeBilinear([inH, inW])
+            .toFloat();
+        const offset = tf.scalar(255);
+        const normalized = tensor.div(offset);
+        const batched = normalized.reshape([1, inH, inW, 3]);
 
         // print the image to the ui for debugging purposes
-
         const debugContext = debugCanvas.getContext("2d");
+        // clear debug canvas
+        debugContext?.clearRect(0, 0, debugCanvas.width, debugCanvas.height);
         debugContext?.putImageData(imageData, 0, 0);
 
-        const predictions = model.predict(tensor) as tf.Tensor;
-        const data = await predictions.data();
+        return model?.predict(batched) as tf.Tensor;
+        });
+        const data = await logits.data();
         const results = Array.from(data).map((probability, index) => ({
             label: labels[index] || `Class ${index}`,
             probability,
         }));
 
         results.sort((a, b) => b.probability - a.probability);
-
-        tensor.dispose();
-        predictions.dispose(); // Dispose the predictions tensor
-
         return results;
     }
 
@@ -192,8 +198,7 @@
         );
 
         // Get the cropped image data based on the rectangle's size
-        const imageData = context.getImageData(0, 0, rectWidth, rectHeight);
-
+        let imageData = context.getImageData(0, 0, rectWidth, rectHeight);
         return imageData; // Return image data for prediction
     }
     function processLoop() {
@@ -207,7 +212,6 @@
             predict(imageData)
                 .then((res) => {
                     // Handle prediction results here (if needed)
-                    console.log("Prediction results:", results);
                     results = res;
                 })
                 .catch((error) => {
@@ -222,15 +226,19 @@
         canvas.height = inH;
         stream.subscribe((value) => {
             if (value) {
+                if (!videoElement)
+                    videoElement = document.createElement("video");
                 videoElement.srcObject = value;
                 videoElement.play();
                 videoElement.onloadedmetadata = updateVideoScale; // Update scale when video metadata is loaded
+                rectX = videoElement.clientWidth / 2 - inW / 2;
+                rectY = videoElement.clientHeight / 2 - inH / 2;
             }
         });
-        debugCanvas = document.createElement("canvas");
+        if (!debugCanvas)
+            debugCanvas = document.createElement("canvas");
         debugCanvas.width = inW;
         debugCanvas.height = inH;
-        document.body.appendChild(debugCanvas);
         loadModel();
         processLoop();
 
@@ -263,7 +271,7 @@
 {:else if !modelLoaded}
     <p>Loading model...</p>
 {/if}
-
+<canvas bind:this={debugCanvas} class="debugCanvas"></canvas>
 {#if runModel}
     <div class="results">
         {#if results && results.length > 0}
@@ -275,19 +283,16 @@
 {/if}
 
 <style>
- .videoContainer {
+    .videoContainer {
         position: relative;
-        width: 640px; /* Adjust as needed */
-        height: 480px; /* Adjust as needed */
+        width: fit-content;
+        margin: 0 auto;
     }
 
     .videoContainer video {
-        position: absolute;
-        top: 0;
-        left: 0;
         width: 100%;
-        height: 100%;
-        object-fit: cover;
+        height: auto;
+        max-height: 600px;
     }
     .results {
         margin-top: 10px;
@@ -296,5 +301,11 @@
 
     .results p {
         margin: 0;
+    }
+
+    .debugCanvas {
+        position: absolute;
+        top: 0;
+        right: 0;
     }
 </style>

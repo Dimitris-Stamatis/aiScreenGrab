@@ -36,9 +36,6 @@
             rectX = Math.max(0, Math.min(newX, maxX));
             rectY = Math.max(0, Math.min(newY, maxY));
 
-            rect.style.left = `${rectX}px`;
-            rect.style.top = `${rectY}px`;
-
             event.preventDefault();
         }
 
@@ -87,9 +84,6 @@
             rectWidth = newWidth;
             rectHeight = newHeight;
 
-            rect.style.width = `${rectWidth}px`;
-            rect.style.height = `${rectHeight}px`;
-
             event.preventDefault();
         }
 
@@ -102,19 +96,12 @@
         document.addEventListener("mousemove", handleMouseMove);
         document.addEventListener("mouseup", handleMouseUp);
     }
-
-    onMount(() => {
-        // Initialize the rectangle's style
-        rect.style.width = `${rectWidth}px`;
-        rect.style.height = `${rectHeight}px`;
-        rect.style.left = `${rectX}px`;
-        rect.style.top = `${rectY}px`;
-    });
 </script>
 
 <div
     class="rectangle"
     bind:this={rect}
+    style="{`left: ${rectX}px; top: ${rectY}px; width: ${rectWidth}px; height: ${rectHeight}px;`}"
     on:mousedown={handleMouseDown}
     aria-hidden="true"
 >

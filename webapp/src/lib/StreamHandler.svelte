@@ -24,6 +24,12 @@
         }
     }
 
+    function switchScreenShare() {
+        // switch input source of screen share
+        stream.set(null);
+        startStream();
+    }
+
     function stopStream() {
         if ($stream) {
             $stream.getTracks().forEach((track) => track.stop());
@@ -33,7 +39,11 @@
     startStream();
     onDestroy(stopStream);
 </script>
-
+{#if type == "screen" && $stream}
+<button on:click={() => {switchScreenShare();}}>
+  Switch Screen Share
+</button>
+{/if}
 <style>
 
 </style>

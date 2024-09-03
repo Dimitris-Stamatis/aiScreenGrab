@@ -3,8 +3,9 @@
     import TensorModelLoad from "$lib/TensorModelLoad.svelte";
   import { modelStore } from "../../stores";
 
-  $: showCamera = true;
+  let showCamera = true;
   let showFeed = false;
+  let runModel = false;
 
   if ( typeof window !== "undefined" && $modelStore.modelFiles.length === 0 ) {
     alert("Please upload a model file first.");
@@ -19,14 +20,17 @@
   <button on:click={() => (showFeed = !showFeed)}>
     {showFeed ? "Hide Feed" : "Show Feed"}
   </button>
+  <button on:click={() => {runModel = !runModel;}}>
+    {runModel ? "Stop Model" : "Run Model"}
+    </button>
   {#if showFeed}
     {#if showCamera}
       <StreamHandler type="camera" />
     {:else}
-      <StreamHandler type="screen" />
+      <StreamHandler type="screen"/>
     {/if}
   {/if}
-  <TensorModelLoad />
+  <TensorModelLoad {runModel}/>
 </div>
 
 <style>

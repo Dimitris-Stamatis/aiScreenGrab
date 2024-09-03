@@ -257,8 +257,6 @@
         bind:rectY
         bind:rectWidth
         bind:rectHeight
-        bind:inW
-        bind:inH
         bind:videoElement
     />
 </div>

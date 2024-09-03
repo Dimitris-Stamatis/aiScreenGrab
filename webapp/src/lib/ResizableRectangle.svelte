@@ -5,8 +5,6 @@
     export let rectY: number;
     export let rectWidth: number;
     export let rectHeight: number;
-    export let inW: number;
-    export let inH: number;
     export let videoElement: HTMLVideoElement;
 
     let rect: HTMLDivElement;

@@ -7,7 +7,7 @@
 
     export let runModel = false;
 
-    let model: tf.GraphModel | null = null;
+    let model: tf.GraphModel | tf.LayersModel | null = null;
     let modelLoaded = false;
     let inW: number, inH: number, outW: number, outH: number;
     let labels: string[] = [];
@@ -124,7 +124,11 @@
 
     async function loadModel() {
         try {
-            model = await tf.loadGraphModel(indexedDBIOHandler);
+            if ($modelStore.modelType == "graph") {
+                model = await tf.loadGraphModel(indexedDBIOHandler);
+            } else {
+                model = await tf.loadLayersModel(indexedDBIOHandler);
+            }
             modelLoaded = true;
         } catch (error) {
             console.error("Error loading model:", error);

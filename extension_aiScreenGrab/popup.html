@@ -2,13 +2,46 @@
 <html>
 
 <head>
-    <title>AI Stream Capture</title>
+    <title>In window AI model prediction</title>
+    <link rel="stylesheet" href="popup.css">
 </head>
 
-<body style="width: 600px; height: 600px;">
-    <button id="startCapture">Start Screen Capture</button>
-    <button id="stopCapture">Stop Capture</button>
-    <script src="popup.js"></script>
+<body>
+    <h1>AI Model Prediction in window</h1>
+    <form id="modelDetails">
+        <label>
+            Model files:
+            <input type="file" id="modelFiles" name="modelFiles" multiple accept=".json,.bin"/>
+        </label>
+        <div class="selectedFiles">
+            <ul id="modelFilesList"></ul>
+        </div>
+        <label>
+            Input Shape:
+            <input type="text" id="inputShape" name="inputShape" placeholder="e.g. 244x244"/>
+        </label>
+        <label>
+            Output Shape:
+            <input type="text" id="outputShape" name="outputShape" placeholder="e.g. 1000"/>
+        </label>
+        <label>
+            Model Type:
+            <select id="modelType" name="modelType">
+                <option value="layer">Layer</option>
+                <option value="graph">Graph</option>
+            </select>
+        </label>
+        <label>
+            Return Type:
+            <select id="returnType" name="returnType">
+                <option value="classes">Classes</option>
+                <option value="boundingbox">Bounding Boxes</option>
+            </select>
+        </label>
+        <button type="submit">Save</button>
+    </form>
+    <button id="drawArea">Draw Area</button>
+    <script type="module" src="popup.mjs"></script>
 </body>
 
 </html>

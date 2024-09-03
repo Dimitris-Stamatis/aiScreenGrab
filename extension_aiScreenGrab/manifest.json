@@ -1,17 +1,22 @@
 {
     "manifest_version": 3,
-    "name": "Tab Streamer",
+    "name": "AI Model in Window",
     "version": "1.0",
-    "description": "Stream tab content as video to another tab",
+    "description": "Choose area of interest and run AI model on it",
     "permissions": [
-        "desktopCapture",
-        "tabs"
+        "scripting",
+        "activeTab",
+        "storage"
     ],
     "background": {
-        "service_worker": "service_worker.js",
+        "service_worker": "service-worker.js",
         "type": "module"
     },
     "action": {
+        "default_title": "AI Model in Window",
         "default_popup": "popup.html"
-    }
+    },
+    "host_permissions": [
+        "*://*/*"
+    ]
 }

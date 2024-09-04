@@ -1,18 +1,19 @@
 import { indexedDBIOHandler } from "./customIOHandler.mjs";
-export async function loadModel() {
+import * as tf from 'https://cdn.skypack.dev/pin/@tensorflow/tfjs@v4.20.0-2i3xZugZdN63AwP38wHs/mode=imports,min/optimized/@tensorflow/tfjs.js';
+
+export async function loadModel(modelType) {
     try {
-        if ($modelStore.modelType == "graph") {
-            model = await tf.loadGraphModel(indexedDBIOHandler);
+        if (modelType == "graph") {
+            return await tf.loadGraphModel(indexedDBIOHandler);
         } else {
-            model = await tf.loadLayersModel(indexedDBIOHandler);
+            return await tf.loadLayersModel(indexedDBIOHandler);
         }
-        return model;
     } catch (error) {
         console.error("Error loading model:", error);
     }
 }
 
-export async function predict(imageData) {
+export async function predict(model, imageData) {
     if (!model) {
         console.error("Model not loaded.");
         return;

@@ -1,21 +1,68 @@
-.aiScreen-overlay {
+.__extension_aiScreen-overlay {
     position: fixed;
     top: 0;
     left: 0;
     width: 100%;
     height: 100%;
-    z-index: 999999999;
+    z-index: 999999998;
     background: rgba(0, 0, 0, 0.5);
     display: none;
 }
 
-.aiScreen-overlay.active {
+.__extension_aiScreen-overlay.active {
     display: block;
+    cursor: crosshair;
 }
 
-.aiScreen-rect {
+.__extension_aiScreen-rect {
     position: absolute;
     border: 2px solid #007bff;
     background: rgba(0, 123, 255, 0.1);
     z-index: 999999999;
+    display: none;
+    pointer-events: none;
+}
+
+.__extension_aiScreen-rect.active {
+    display: block;
+}
+
+.__extension_aiScreen-modelUI {
+    position: fixed;
+    top: 10px;
+    right: 10px;
+    z-index: 999999999;
+    display: none;
+    border: 1px solid #007bff;
+    background: rgba(255, 255, 255, .5);
+    padding: 10px;
+    border-radius: 5px;
+}
+
+.__extension_aiScreen-modelUI.active {
+    display: block;
+}
+
+.__extension_aiScreen-modelUI button {
+    display: block;
+    margin: 5px 0;
+    padding: 5px 10px;
+    border: 1px solid #007bff;
+    background: #007bff;
+    color: #fff;
+    border-radius: 5px;
+    cursor: pointer;
+}
+
+.__extension_aiScreen-drawArea.active {
+    display: block;
+}
+
+.__extension_aiScreen-canvas {
+    /* display: none;*/
+    position: absolute;
+    top: 0;
+    left: 0;
+    border: 1px solid black;
+    z-index: 100;
 }

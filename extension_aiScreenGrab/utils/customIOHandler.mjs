@@ -1,7 +1,11 @@
+import { getAllFiles } from "./indexedDB.mjs";
+
 // Custom TensorFlow.js I/O handler for IndexedDB
 export const indexedDBIOHandler = {
     async load() {
         const files = await getAllFiles();
+        let labels = [];
+        console.log(files);
         const modelJsonFile = files.find((file) =>
             file.name.endsWith("model.json"),
         );
@@ -41,6 +45,7 @@ export const indexedDBIOHandler = {
             modelTopology: modelJson.modelTopology,
             weightSpecs: modelJson.weightsManifest[0].weights,
             weightData: weightData,
+            labels: labels,
         };
     },
 };

@@ -30,7 +30,7 @@ document.getElementById('modelDetails').addEventListener('submit', (e) => {
     modelFiles: modelFileNames,
   };
 
-  chrome.storage.sync.set({ modelDetails });
+  chrome.storage.local.set({ modelDetails });
   submitbutton.disabled = false;
   submitbutton.textContent = 'Save';
 });
@@ -39,7 +39,7 @@ drawbutton.addEventListener('click', () => {
   chrome.runtime.sendMessage({ type: 'startDrawing' }, (response) => {});
 });
 
-chrome.storage.sync.get('modelDetails', ({ modelDetails }) => {
+chrome.storage.local.get('modelDetails', ({ modelDetails }) => {
   if (modelDetails) {
     document.getElementById('inputShape').value = modelDetails.inputShape;
     document.getElementById('outputShape').value = modelDetails.outputShape;

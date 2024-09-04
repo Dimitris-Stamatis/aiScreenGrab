@@ -6,15 +6,17 @@
     "permissions": [
         "scripting",
         "activeTab",
-        "storage"
+        "storage",
+        "tabCapture",
+        "offscreen",
+        "tabs"
     ],
     "background": {
         "service_worker": "service-worker.js",
         "type": "module"
     },
     "action": {
-        "default_title": "AI Model in Window",
-        "default_popup": "popup.html"
+        "default_title": "AI Model in Window"
     },
     "host_permissions": [
         "*://*/*"

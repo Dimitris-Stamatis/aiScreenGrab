@@ -4,13 +4,17 @@ import { loadModel, predict } from "./utils/modelHelpers.mjs";
 let injectedTabs = [];
 let model = null;
 
+chrome.runtime.onInstalled.addListener(() => {
+  console.log('Extension installed.');
+});
+
 chrome.action.onClicked.addListener(async (tab) => {
   let modelDetails = await chrome.storage.local.get('modelDetails');
   modelDetails = modelDetails.modelDetails;
   const modelDetailsPromise = createDeferredPromise();
   if (!modelDetails) {
     // open "popup.html" in a new tab
-    chrome.tabs.create({ url: 'popup.html' });
+    configureModel();
     // wait for the model details to be saved
     await chrome.storage.onChanged.addListener((changes, areaName) => {
       if (areaName === 'local' && changes.modelDetails) {
@@ -46,6 +50,7 @@ chrome.action.onClicked.addListener(async (tab) => {
       url: 'offscreen.html',
       reasons: ['USER_MEDIA'],
       justification: 'Recording from chrome.tabCapture API',
+
     });
   }
 
@@ -91,6 +96,9 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
     case 'frameData':
       console.log('Frame data received:', message.imageData);
       break;
+    case 'configureModel':
+      configureModel();
+      break;
   }
   return true;
 });
@@ -117,4 +125,8 @@ async function isTabCaptured(tabId) {
       resolve(isCaptured);
     });
   });
+}
+
+function configureModel() {
+  chrome.tabs.create({ url: 'popup.html' });
 }

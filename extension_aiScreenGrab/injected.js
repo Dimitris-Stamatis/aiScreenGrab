@@ -4,6 +4,7 @@
         <div class="__extension_aiScreen-modelUI">
             <button class="__extension_aiScreen-predict">Start predictions</button>
             <button class="__extension_aiScreen-drawArea">Draw Area</button>
+            <button class="__extension_aiScreen-configureModel">Configure Model</button>
             <div class="__extension_aiScreen-results"></div>
         </div>
         <div class="__extension_aiScreen-overlayElements">
@@ -23,12 +24,17 @@
         rect: container.querySelector('.__extension_aiScreen-rect'),
         canvas: container.querySelector('.__extension_aiScreen-canvas'),
         modelUI: container.querySelector('.__extension_aiScreen-modelUI'),
+        configureModel: container.querySelector('.__extension_aiScreen-configureModel'),
         video: document.createElement('video'),
     };
     console.log(uiElements);
     uiElements.redrawButton.addEventListener('click', () => {
         startDrawing(aspectRatioLocal);
         uiElements.redrawButton.classList.remove('active');
+    });
+
+    uiElements.configureModel.addEventListener('click', () => {
+        chrome.runtime.sendMessage({ target: 'worker', type: 'configureModel' });
     });
 
     // listen for messages from the background script

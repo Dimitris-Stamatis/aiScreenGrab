@@ -1,6 +1,5 @@
 import { saveFile } from "./utils/indexedDB.mjs";
 
-const drawbutton = document.getElementById('drawArea');
 const submitbutton = document.querySelector('button[type="submit"]');
 document.getElementById('modelDetails').addEventListener('submit', (e) => {
   e.preventDefault();
@@ -33,22 +32,20 @@ document.getElementById('modelDetails').addEventListener('submit', (e) => {
   chrome.storage.local.set({ modelDetails });
   submitbutton.disabled = false;
   submitbutton.textContent = 'Save';
-});
-
-drawbutton.addEventListener('click', () => {
-  chrome.runtime.sendMessage({ type: 'startDrawing' }, (response) => {});
+  // close tab after sending success message to service worker
+  window.close();
 });
 
 chrome.storage.local.get('modelDetails', ({ modelDetails }) => {
-  if (modelDetails) {
-    document.getElementById('inputShape').value = modelDetails.inputShape;
-    document.getElementById('outputShape').value = modelDetails.outputShape;
-    document.getElementById('modelType').value = modelDetails.modelType;
-    document.getElementById('returnType').value = modelDetails.returnType;
-    modelDetails.modelFiles.forEach(file => {
-      const fileElement = document.createElement('li');
-      fileElement.textContent = file;
-      document.getElementById('modelFilesList').appendChild(fileElement);
-    });
-  }
+  if (!modelDetails)
+    return;
+  document.getElementById('inputShape').value = modelDetails.inputShape;
+  document.getElementById('outputShape').value = modelDetails.outputShape;
+  document.getElementById('modelType').value = modelDetails.modelType;
+  document.getElementById('returnType').value = modelDetails.returnType;
+  modelDetails.modelFiles.forEach(file => {
+    const fileElement = document.createElement('li');
+    fileElement.textContent = file;
+    document.getElementById('modelFilesList').appendChild(fileElement);
+  });
 });

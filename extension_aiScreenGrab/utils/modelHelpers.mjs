@@ -1,23 +1,30 @@
 import { indexedDBIOHandler } from "./customIOHandler.mjs";
 import * as tf from 'https://cdn.skypack.dev/pin/@tensorflow/tfjs@v4.20.0-2i3xZugZdN63AwP38wHs/mode=imports,min/optimized/@tensorflow/tfjs.js';
 
+let labels = [];
 export async function loadModel(modelType) {
     try {
+        let model = null;
         if (modelType == "graph") {
-            return await tf.loadGraphModel(indexedDBIOHandler);
+            model =  await tf.loadGraphModel(indexedDBIOHandler);
         } else {
-            return await tf.loadLayersModel(indexedDBIOHandler);
+            model = await tf.loadLayersModel(indexedDBIOHandler);
         }
+        labels = (await chrome.storage.local.get('labels'))?.labels;
+        return model;
     } catch (error) {
         console.error("Error loading model:", error);
     }
+
 }
 
-export async function predict(model, imageData) {
+export async function predict(model, imageData, inputShape) {
     if (!model) {
         console.error("Model not loaded.");
         return;
     }
+
+    const [inH, inW] = inputShape.split("x").map(Number);
 
     const logits = tf.tidy(() => {
 
@@ -29,13 +36,7 @@ export async function predict(model, imageData) {
     const normalized = tensor.div(offset);
     const batched = normalized.reshape([1, inH, inW, 3]);
 
-    // print the image to the ui for debugging purposes
-    const debugContext = debugCanvas.getContext("2d");
-    // clear debug canvas
-    debugContext?.clearRect(0, 0, debugCanvas.width, debugCanvas.height);
-    debugContext?.putImageData(imageData, 0, 0);
-
-    return model?.predict(batched);
+    return model.predict(batched);
     });
     const data = await logits.data();
     const results = Array.from(data).map((probability, index) => ({

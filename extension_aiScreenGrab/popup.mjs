@@ -22,8 +22,8 @@ document.getElementById('modelDetails').addEventListener('submit', (e) => {
   });
 
   const modelDetails = {
-    inputShape: formdata.get('inputShape'),
-    outputShape: formdata.get('outputShape'),
+    inputShape: formdata.get('inputShape').toLowerCase(),
+    outputShape: formdata.get('outputShape').toLowerCase(),
     modelType: formdata.get('modelType'),
     returnType: formdata.get('returnType'),
     modelFiles: modelFileNames,

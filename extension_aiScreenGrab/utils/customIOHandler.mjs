@@ -4,8 +4,8 @@ import { getAllFiles } from "./indexedDB.mjs";
 export const indexedDBIOHandler = {
     async load() {
         const files = await getAllFiles();
+        console.log("Files in IndexedDB:", files);
         let labels = [];
-        console.log(files);
         const modelJsonFile = files.find((file) =>
             file.name.endsWith("model.json"),
         );
@@ -32,7 +32,11 @@ export const indexedDBIOHandler = {
         if (labelsFile) {
             const labelsText = await fileToString(labelsFile);
             try {
-                labels = JSON.parse(labelsText);
+                const labels = JSON.parse(labelsText);
+                console.log(labels);
+                chrome.storage.local.set({ labels }, () => {
+                    console.log("Labels saved to storage.");
+                });
             } catch (error) {
                 console.error("Error parsing labels JSON:", error);
                 throw new Error("Invalid JSON in labels.json");
@@ -45,7 +49,6 @@ export const indexedDBIOHandler = {
             modelTopology: modelJson.modelTopology,
             weightSpecs: modelJson.weightsManifest[0].weights,
             weightData: weightData,
-            labels: labels,
         };
     },
 };

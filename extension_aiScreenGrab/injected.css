@@ -15,7 +15,7 @@
 }
 
 .__extension_aiScreen-rect {
-    position: absolute;
+    position: fixed;
     border: 2px solid #007bff;
     background: rgba(0, 123, 255, 0.1);
     z-index: 999999999;
@@ -65,4 +65,9 @@
     left: 0;
     border: 1px solid black;
     z-index: 100;
+}
+
+.__extension_aiScreen-results {
+    background: rgba(255, 255, 255, .5);
+    color: black;
 }

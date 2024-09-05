@@ -1,24 +1,26 @@
-import { saveFile } from "./utils/indexedDB.mjs";
+import { getAllFiles } from "./utils/indexedDB.mjs";
 import { loadModel, predict } from "./utils/modelHelpers.mjs";
 
 let injectedTabs = [];
-let model = null;
+let modelLoaded = null;
+let modelDetails = {};
 
-chrome.runtime.onInstalled.addListener(() => {
+chrome.runtime.onInstalled.addListener(async () => {
   console.log('Extension installed.');
 });
 
 chrome.action.onClicked.addListener(async (tab) => {
-  let modelDetails = await chrome.storage.local.get('modelDetails');
-  modelDetails = modelDetails.modelDetails;
+  modelDetails = (await chrome.storage.local.get('modelDetails'))?.modelDetails;
   const modelDetailsPromise = createDeferredPromise();
   if (!modelDetails) {
     // open "popup.html" in a new tab
     configureModel();
     // wait for the model details to be saved
-    await chrome.storage.onChanged.addListener((changes, areaName) => {
+    await chrome.storage.onChanged.addListener(async (changes, areaName) => {
       if (areaName === 'local' && changes.modelDetails) {
         modelDetails = changes.modelDetails.newValue;
+        modelLoaded = await loadModel(modelDetails.modelType);
+        console.log('Model loaded:', modelLoaded);
         modelDetailsPromise.resolve();
         chrome.storage.onChanged.removeListener();
       }
@@ -27,6 +29,8 @@ chrome.action.onClicked.addListener(async (tab) => {
     modelDetailsPromise.resolve();
   }
   await modelDetailsPromise.promise;
+  modelLoaded = await loadModel(modelDetails.modelType);
+  console.log('Model loaded:', modelLoaded);
   const currentTab = tab.id;
   if (!injectedTabs.includes(currentTab)) {
     injectedTabs.push(currentTab);
@@ -50,12 +54,11 @@ chrome.action.onClicked.addListener(async (tab) => {
       url: 'offscreen.html',
       reasons: ['USER_MEDIA'],
       justification: 'Recording from chrome.tabCapture API',
-
     });
   }
 
-  const aspectRatio = modelDetails.inputShape.toLowerCase();
-  if (isTabCaptured(currentTab)) {
+  const aspectRatio = modelDetails.inputShape;
+  if ((await isTabCaptured(currentTab))) {
     console.log('Tab is already being captured.');
   } else {
     const streamId = await chrome.tabCapture.getMediaStreamId({
@@ -80,24 +83,45 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
   if (message.target !== 'worker') return;
   console.log(message);
   switch (message.type) {
-    case 'loadModel':
-      try {
-        modelLoaded = await loadModel(modelDetails.modelType);
-      } catch (error) {
-        sendResponse({ success: false, error: 'Error loading model.' });
-        return;
-      }
-      sendResponse({ success: true });
-      break;
     case 'predict':
-      const predictions = await predict(modelLoaded, message.imageData);
-      sendResponse(predictions);
+      chrome.runtime.sendMessage({
+        target: 'offscreen',
+        type: `${message.action}-frameCapture`,
+        targetTabId: sender.tab.id
+      });
       break;
     case 'frameData':
       console.log('Frame data received:', message.imageData);
+      console.log(typeof message.imageData);
+      // Check if the received message has the expected properties
+      if (message.imageData && message.imageData.data && message.imageData.width && message.imageData.height) {
+        // Reconstruct the ImageData object
+        const reconstructedImageData = new ImageData(
+          new Uint8ClampedArray(message.imageData.data),  // Convert back to Uint8ClampedArray
+          message.imageData.width,
+          message.imageData.height
+        );
+        const predictions = await predict(modelLoaded, reconstructedImageData, modelDetails.inputShape);
+        console.log(predictions);
+        chrome.tabs.sendMessage(message.targetTabId, {
+          type: 'predictions',
+          predictions
+        });
+      } else {
+        console.error("Invalid image data received.");
+      }
       break;
     case 'configureModel':
       configureModel();
+      break;
+    case 'rectUpdate':
+      console.log('rect update:', message.rect);
+      chrome.runtime.sendMessage({
+        target: 'offscreen',
+        type: 'rectUpdate',
+        rect: message.rect,
+        tabid: sender.tab.id
+      });
       break;
   }
   return true;
@@ -120,6 +144,8 @@ function createDeferredPromise() {
 async function isTabCaptured(tabId) {
   return new Promise((resolve) => {
     chrome.tabCapture.getCapturedTabs((capturedTabs) => {
+      console.log(capturedTabs);
+      console.log(tabId);
       // Check if any of the captured tabs matches the target tabId
       const isCaptured = capturedTabs.some((capturedTab) => capturedTab.tabId === tabId);
       resolve(isCaptured);
@@ -128,5 +154,5 @@ async function isTabCaptured(tabId) {
 }
 
 function configureModel() {
-  chrome.tabs.create({ url: 'popup.html' });
+  chrome.windows.create({ url: 'popup.html', type: 'popup', width: 600, height: 600 });
 }

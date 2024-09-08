@@ -1,6 +1,7 @@
 const video = document.createElement('video');
+video.style="width: 100%";
 // Create an OffscreenCanvas
-const offscreenCanvas = new OffscreenCanvas(640, 480); // Adjust size as needed
+const offscreenCanvas = new OffscreenCanvas(0, 0); // Adjust size as needed
 const ctx = offscreenCanvas.getContext('2d', { willReadFrequently: true });
 let rect = {
   x: 0,
@@ -46,11 +47,10 @@ function drawToCanvas(targetTabId) {
   if (!sendframesstatus)
     return;
   if (!video.paused) {
-    ctx.drawImage(video, rect.x, rect.y, rect.width, rect.height);
+    ctx.clearRect(0, 0, rect.width, rect.height);
+    ctx.drawImage(video, rect.x, rect.y, rect.width, rect.height, 0, 0, rect.width, rect.height);
     // Send frame data back to the worker
-    const imageData = ctx.getImageData(0, 0, offscreenCanvas.width, offscreenCanvas.height);
-    console.log('Frame data sent:', imageData);
-    console.log(typeof imageData);
+    const imageData = ctx.getImageData(0, 0, rect.width, rect.height);
     chrome.runtime.sendMessage({
       target: 'worker',
       type: 'frameData',

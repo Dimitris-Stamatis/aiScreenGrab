@@ -20,7 +20,8 @@ export async function saveFile(file) {
       const transaction = db.transaction('files', 'readwrite');
       const store = transaction.objectStore('files');
       const request = store.put({ id: file.name, file });
-
+console.log(file);
+console.log(chrome.runtime.id);
       request.onsuccess = () => resolve();
       request.onerror = () => reject(request.error);
     });

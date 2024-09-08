@@ -1,7 +1,7 @@
 import { saveFile } from "./utils/indexedDB.mjs";
 
 const submitbutton = document.querySelector('button[type="submit"]');
-document.getElementById('modelDetails').addEventListener('submit', (e) => {
+document.getElementById('modelDetails').addEventListener('submit', async (e) => {
   e.preventDefault();
   submitbutton.disabled = true;
   submitbutton.textContent = 'Uploading...';
@@ -12,8 +12,8 @@ document.getElementById('modelDetails').addEventListener('submit', (e) => {
     modelFiles = Array.from(selectedfiles);
   }
 
-  modelFiles.forEach(file => {
-    saveFile(file).catch(error => {
+  modelFiles.forEach(async (file) => {
+    await saveFile(file).catch(error => {
       submitbutton.disabled = false;
       alert('Failed to save file: ' + error.message);
     });
@@ -29,11 +29,11 @@ document.getElementById('modelDetails').addEventListener('submit', (e) => {
     modelFiles: modelFileNames,
   };
 
-  chrome.storage.local.set({ modelDetails });
+  await chrome.storage.local.set({ modelDetails });
   submitbutton.disabled = false;
   submitbutton.textContent = 'Save';
   // close tab after sending success message to service worker
-  window.close();
+  // window.close();
 });
 
 chrome.storage.local.get('modelDetails', ({ modelDetails }) => {

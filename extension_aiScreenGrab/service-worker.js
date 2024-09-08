@@ -105,7 +105,8 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
         console.log(predictions);
         chrome.tabs.sendMessage(message.targetTabId, {
           type: 'predictions',
-          predictions
+          predictions,
+          imageData: message.imageData
         });
       } else {
         console.error("Invalid image data received.");

@@ -61,6 +61,15 @@
                     return `<div>${label}: ${probability.toFixed(2)}</div>`;
                 }).join('');
                 uiElements.results.innerHTML = results;
+                const reconstructedImageData = new ImageData(
+                    new Uint8ClampedArray(message.imageData.data),  // Convert back to Uint8ClampedArray
+                    message.imageData.width,
+                    message.imageData.height
+                );
+                uiElements.canvas.width = message.imageData.width;
+                uiElements.canvas.height = message.imageData.height;
+                const ctx = uiElements.canvas.getContext('2d');
+                ctx.putImageData(reconstructedImageData, 0, 0);
                 break;
         }
         return true;
@@ -102,44 +111,44 @@
             if (!drawing) return;
             const currentX = e.clientX;
             const currentY = e.clientY;
-        
+
             // Calculate initial rectangle dimensions
             rectWidth = Math.abs(currentX - startX);
             rectHeight = Math.abs(currentY - startY);
-        
+
             if (aspectRatioLocal) { // Maintain aspect ratio while keeping the width correct
                 const ratio = aspectRatioLocal.split('x').map(Number);
                 const aspectRatio = ratio[1] / ratio[0];
-        
+
                 // Calculate height based on the aspect ratio and width
                 let newHeight = rectWidth * aspectRatio;
-        
+
                 // Adjust height if rectangle would extend below the viewport
                 if (rectY + newHeight > window.innerHeight) {
                     newHeight = window.innerHeight - rectY;
                     rectWidth = newHeight / aspectRatio; // Adjust width to maintain aspect ratio
                 }
-        
+
                 // Adjust width if rectangle would extend beyond the viewport
                 if (rectX + rectWidth > window.innerWidth) {
                     rectWidth = window.innerWidth - rectX;
                     newHeight = rectWidth * aspectRatio; // Adjust height to maintain aspect ratio
                 }
-        
+
                 rectHeight = newHeight;
             }
-        
+
             // Update rectangle position to be within viewport
             rectX = Math.min(Math.max(0, startX), window.innerWidth - rectWidth);
             rectY = Math.min(Math.max(0, startY), window.innerHeight - rectHeight);
-        
+
             // Set rectangle styles based on current mouse position
             uiElements.rect.style.left = `${rectX}px`;
             uiElements.rect.style.top = `${rectY}px`;
             uiElements.rect.style.width = `${rectWidth}px`;
             uiElements.rect.style.height = `${rectHeight}px`;
         }
-        
+
         function handleMouseUp(e) {
             drawing = false;
             uiElements.overlay.classList.remove('active');
@@ -149,8 +158,8 @@
             chrome.runtime.sendMessage({
                 target: 'worker',
                 type: 'rectUpdate',
-                rect: { x: rectX, y: rectY, width: rectWidth, height: rectHeight}
-             });
+                rect: { x: rectX, y: rectY, width: rectWidth, height: rectHeight }
+            });
         }
     }
 })();

@@ -1,7 +1,5 @@
-import { getAllFiles } from "./utils/indexedDB.mjs";
 import { loadModel, predict } from "./utils/modelHelpers.mjs";
 
-let injectedTabs = [];
 let modelLoaded = null;
 let modelDetails = {};
 
@@ -32,17 +30,14 @@ chrome.action.onClicked.addListener(async (tab) => {
   modelLoaded = await loadModel(modelDetails.modelType);
   console.log('Model loaded:', modelLoaded);
   const currentTab = tab.id;
-  if (!injectedTabs.includes(currentTab)) {
-    injectedTabs.push(currentTab);
-    await chrome.scripting.executeScript({
-      target: { tabId: currentTab },
-      files: ['injected.js'],
-    });
-    chrome.scripting.insertCSS({
-      target: { tabId: currentTab },
-      files: ['injected.css'],
-    });
-  }
+  await chrome.scripting.executeScript({
+    target: { tabId: currentTab },
+    files: ['injected.js'],
+  });
+  chrome.scripting.insertCSS({
+    target: { tabId: currentTab },
+    files: ['injected.css'],
+  });
   const existingContexts = await chrome.runtime.getContexts({});
 
   const offscreenDocument = existingContexts.find(
@@ -101,8 +96,11 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
           message.imageData.width,
           message.imageData.height
         );
-        const predictions = await predict(modelLoaded, reconstructedImageData, modelDetails.inputShape);
+        let predictions = await predict(modelLoaded, reconstructedImageData, modelDetails.inputShape);
+        // keep only the top 5 predictions
+        predictions = predictions.slice(0, 5);
         console.log(predictions);
+        
         chrome.tabs.sendMessage(message.targetTabId, {
           type: 'predictions',
           predictions,

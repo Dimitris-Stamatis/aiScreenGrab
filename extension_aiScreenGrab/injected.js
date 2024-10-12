@@ -1,7 +1,7 @@
 (async () => {
     const htmltoinject = `
     <div id="__extension_aiScreen">
-        <div class="__extension_aiScreen-modelUI">
+        <div class="__extension_aiScreen-modelUI" data-dragable="true">
             <button class="__extension_aiScreen-predict" data-for="start">Start predictions</button>
             <button class="__extension_aiScreen-drawArea">Draw Area</button>
             <button class="__extension_aiScreen-configureModel">Configure Model</button>
@@ -9,17 +9,25 @@
         </div>
         <div class="__extension_aiScreen-overlayElements">
             <div class="__extension_aiScreen-overlay"></div>
-            <div class="__extension_aiScreen-rect"></div>
+            <div class="__extension_aiScreen-rect" data-dragable="true"></div>
             <canvas class="__extension_aiScreen-canvas"></canvas>
         </div>
     </div>`;
-    
+    const dragableIconURL = chrome.runtime.getURL('icons/drag.svg');
+    const dragableIcon = document.createElement('img');
+    dragableIcon.src = dragableIconURL;
+    dragableIcon.alt = 'Drag';
+    dragableIcon.classList.add('__extension_aiScreen-dragIcon');
+
     document.body.insertAdjacentHTML('beforeend', htmltoinject);
-    
+    document.querySelectorAll('#__extension_aiScreen [data-dragable="true"]').forEach((element) => {
+        element.appendChild(dragableIcon.cloneNode());
+    });
+
     let aspectRatioLocal = localStorage.getItem('aspectRatio') || null;
     let rectState = JSON.parse(localStorage.getItem('rectState')) || null;
     let isPredicting = localStorage.getItem('isPredicting') === 'true';
-    
+
     const container = document.getElementById('__extension_aiScreen');
     let rectX, rectY, rectWidth, rectHeight;
     const uiElements = {
@@ -31,9 +39,10 @@
         predictbutton: container.querySelector('.__extension_aiScreen-predict'),
         configureModel: container.querySelector('.__extension_aiScreen-configureModel'),
         video: document.createElement('video'),
-        results: container.querySelector('.__extension_aiScreen-results')
+        results: container.querySelector('.__extension_aiScreen-results'),
+        draggers: container.querySelectorAll('.__extension_aiScreen-dragIcon')
     };
-    
+
     if (rectState) {
         // Restore rectangle if saved in localStorage
         rectX = rectState.x;
@@ -46,12 +55,12 @@
         uiElements.rect.style.height = `${rectHeight}px`;
         uiElements.rect.classList.add('active');
     }
-    
+
     if (isPredicting) {
         uiElements.predictbutton.dataset.for = 'stop';
         uiElements.predictbutton.textContent = 'Stop predictions';
     }
-    
+
     uiElements.redrawButton.addEventListener('click', () => {
         startDrawing(aspectRatioLocal);
         uiElements.redrawButton.classList.remove('active');
@@ -105,11 +114,11 @@
         }
         uiElements.rect.classList.remove('active');
         uiElements.overlay.classList.add('active');
-        
+
         let startX = 0;
         let startY = 0;
         let drawing = false;
-        
+
         uiElements.overlay.addEventListener('mousedown', handleMouseDown);
         document.addEventListener('mousemove', handleMouseMove);
         document.addEventListener('mouseup', handleMouseUp);
@@ -170,10 +179,10 @@
             uiElements.redrawButton.classList.add('active');
             uiElements.modelUI.classList.add('active');
             document.body.style.overflow = bodyOverflowBak;
-            
+
             const rect = { x: rectX, y: rectY, width: rectWidth, height: rectHeight };
             localStorage.setItem('rectState', JSON.stringify(rect));
-            
+
             chrome.runtime.sendMessage({
                 target: 'worker',
                 type: 'rectUpdate',
@@ -181,4 +190,29 @@
             });
         }
     }
+
+    uiElements.draggers.forEach((dragger) => {
+        dragger.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            const parent = e.target.parentElement;
+            // move the parent element along
+            const rect = parent.getBoundingClientRect();
+            const offsetX = e.clientX - rect.left;
+            const offsetY = e.clientY - rect.top;
+            const maxX = window.innerWidth - rect.width;
+            const maxY = window.innerHeight - rect.height;
+
+            document.addEventListener('mousemove', handleDrag);
+            document.addEventListener('mouseup', () => {
+                document.removeEventListener('mousemove', handleDrag);
+            });
+
+            function handleDrag(e) {
+                const x = Math.min(Math.max(0, e.clientX - offsetX), maxX);
+                const y = Math.min(Math.max(0, e.clientY - offsetY), maxY);
+                parent.style.left = `${x}px`;
+                parent.style.top = `${y}px`;
+            }
+        });
+    });
 })();

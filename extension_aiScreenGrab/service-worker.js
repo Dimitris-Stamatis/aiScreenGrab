@@ -114,11 +114,11 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
       configureModel();
       break;
     case 'rectUpdate':
-      console.log('rect update:', message.rect);
       chrome.runtime.sendMessage({
         target: 'offscreen',
         type: 'rectUpdate',
         rect: message.rect,
+        yoffset: message.yoffset,
         tabid: sender.tab.id
       });
       break;
@@ -143,8 +143,8 @@ function createDeferredPromise() {
 async function isTabCaptured(tabId) {
   return new Promise((resolve) => {
     chrome.tabCapture.getCapturedTabs((capturedTabs) => {
-      console.log(capturedTabs);
-      console.log(tabId);
+      //console.log(capturedTabs);
+      //console.log(tabId);
       // Check if any of the captured tabs matches the target tabId
       const isCaptured = capturedTabs.some((capturedTab) => capturedTab.tabId === tabId);
       resolve(isCaptured);

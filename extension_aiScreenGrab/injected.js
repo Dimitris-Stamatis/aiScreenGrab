@@ -114,21 +114,21 @@
         }
         uiElements.rect.classList.remove('active');
         uiElements.overlay.classList.add('active');
-
+    
         let startX = 0;
         let startY = 0;
         let drawing = false;
-
+        
         uiElements.overlay.addEventListener('mousedown', handleMouseDown);
         document.addEventListener('mousemove', handleMouseMove);
         document.addEventListener('mouseup', handleMouseUp);
         const bodyOverflowBak = document.body.style.overflow;
-
+    
         function handleMouseDown(e) {
-            startX = e.clientX;
-            startY = e.clientY;
+            startX = e.clientX; // Relative to overlay (X axis)
+            startY = e.clientY + window.scrollY; // Relative to overlay (Y axis + scroll)
             drawing = true;
-
+    
             uiElements.rect.style.left = `${startX}px`;
             uiElements.rect.style.top = `${startY}px`;
             uiElements.rect.style.width = `0px`;
@@ -136,60 +136,74 @@
             uiElements.rect.classList.add('active');
             document.body.style.overflow = 'hidden';
         }
-
+    
         function handleMouseMove(e) {
             if (!drawing) return;
-            const currentX = e.clientX;
-            const currentY = e.clientY;
-
+    
+            const currentX = e.clientX ;  // Adjusted X axis
+            const currentY = e.clientY + window.scrollY; // Adjusted Y axis
+    
             rectWidth = Math.abs(currentX - startX);
             rectHeight = Math.abs(currentY - startY);
-
+    
             if (aspectRatioLocal) {
                 const ratio = aspectRatioLocal.split('x').map(Number);
                 const aspectRatio = ratio[1] / ratio[0];
-
+    
                 let newHeight = rectWidth * aspectRatio;
-
+    
                 if (rectY + newHeight > window.innerHeight) {
                     newHeight = window.innerHeight - rectY;
                     rectWidth = newHeight / aspectRatio;
                 }
-
+    
                 if (rectX + rectWidth > window.innerWidth) {
                     rectWidth = window.innerWidth - rectX;
                     newHeight = rectWidth * aspectRatio;
                 }
-
+    
                 rectHeight = newHeight;
             }
-
+    
             rectX = Math.min(Math.max(0, startX), window.innerWidth - rectWidth);
             rectY = Math.min(Math.max(0, startY), window.innerHeight - rectHeight);
-
-            uiElements.rect.style.left = `${rectX}px`;
-            uiElements.rect.style.top = `${rectY}px`;
-            uiElements.rect.style.width = `${rectWidth}px`;
-            uiElements.rect.style.height = `${rectHeight}px`;
+    
+            updateRectStyle(rectX, rectY, rectWidth, rectHeight);
         }
-
+    
         function handleMouseUp(e) {
             drawing = false;
             uiElements.overlay.classList.remove('active');
             uiElements.redrawButton.classList.add('active');
             uiElements.modelUI.classList.add('active');
             document.body.style.overflow = bodyOverflowBak;
-
+    
             const rect = { x: rectX, y: rectY, width: rectWidth, height: rectHeight };
-            localStorage.setItem('rectState', JSON.stringify(rect));
-
+            updateRectStyle(rectX, rectY, rectWidth, rectHeight);
+    
             chrome.runtime.sendMessage({
                 target: 'worker',
                 type: 'rectUpdate',
-                rect
+                rect,
+                yoffset: window.outerHeight - window.innerHeight
             });
+            document.removeEventListener('mousemove', handleMouseMove);
+            document.removeEventListener('mouseup', handleMouseUp);
+            document.removeEventListener('mousedown', handleMouseDown);
         }
     }
+    
+    function updateRectStyle(rectX, rectY, rectWidth, rectHeight) {
+        uiElements.rect.style.left = `${rectX}px`;
+        uiElements.rect.style.top = `${rectY}px`;
+        uiElements.rect.style.width = `${rectWidth}px`;
+        uiElements.rect.style.height = `${rectHeight}px`;
+    
+        const rect = { x: rectX, y: rectY, width: rectWidth, height: rectHeight };
+        localStorage.setItem('rectState', JSON.stringify(rect));
+    }
+    
+    
 
     uiElements.draggers.forEach((dragger) => {
         dragger.addEventListener('mousedown', (e) => {
@@ -201,17 +215,29 @@
             const offsetY = e.clientY - rect.top;
             const maxX = window.innerWidth - rect.width;
             const maxY = window.innerHeight - rect.height;
+            const boundingbox = uiElements.rect.getBoundingClientRect();
+            let x = boundingbox.left;
+            let y = boundingbox.top;
 
             document.addEventListener('mousemove', handleDrag);
             document.addEventListener('mouseup', () => {
                 document.removeEventListener('mousemove', handleDrag);
+                if (dragger.parentElement.classList.contains('__extension_aiScreen-rect')) {
+                    updateRectStyle(x, y, rectWidth, rectHeight);
+                    chrome.runtime.sendMessage({
+                        target: 'worker',
+                        type: 'rectUpdate',
+                        rect,
+                        yoffset: window.outerHeight - window.innerHeight
+                    });
+                }
             });
 
             function handleDrag(e) {
-                const x = Math.min(Math.max(0, e.clientX - offsetX), maxX);
-                const y = Math.min(Math.max(0, e.clientY - offsetY), maxY);
+                x = Math.min(Math.max(0, e.clientX - offsetX), maxX);
+                y = Math.min(Math.max(0, e.clientY - offsetY), maxY);
                 parent.style.left = `${x}px`;
-                parent.style.top = `${y}px`;
+                parent.style.top = `${y}px`;                
             }
         });
     });

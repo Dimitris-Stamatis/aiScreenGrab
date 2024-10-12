@@ -21,6 +21,7 @@
     z-index: 999999998;
     display: none;
     pointer-events: none;
+    box-sizing: content-box;
 }
 
 .__extension_aiScreen-rect.active {
@@ -37,6 +38,8 @@
     background: rgba(255, 255, 255, .5);
     padding: 10px;
     border-radius: 5px;
+    width: fit-content;
+    max-width: 40vw;
 }
 
 .__extension_aiScreen-modelUI.active {
@@ -64,7 +67,7 @@
     top: 0;
     left: 0;
     border: 1px solid black;
-    z-index: 100;
+    z-index: 100000;
 }
 
 .__extension_aiScreen-results {

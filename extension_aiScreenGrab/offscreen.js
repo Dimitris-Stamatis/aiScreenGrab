@@ -1,5 +1,5 @@
 const video = document.createElement('video');
-video.style="width: 100%";
+//video.style="width: 100%";
 // Create an OffscreenCanvas
 const offscreenCanvas = new OffscreenCanvas(0, 0); // Adjust size as needed
 const ctx = offscreenCanvas.getContext('2d', { willReadFrequently: true });
@@ -9,6 +9,7 @@ let rect = {
   width: 0,
   height: 0
 };
+yoffset = 0;
 let sendframesstatus = false;
 chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
   if (message.target !== 'offscreen') return;
@@ -32,11 +33,13 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
       drawToCanvas(message.targetTabId); // Start drawing frames
       break;
     case 'stop-frameCapture':
-      console.log('Stopping frame capture');
       sendframesstatus = false;
       break;
     case 'rectUpdate':
       rect = message.rect;
+      yoffset = message.yoffset;
+      console.log('y offset:', yoffset);
+      console.log(message)
       offscreenCanvas.width = rect.width;
       offscreenCanvas.height = rect.height;
       break;
@@ -44,13 +47,28 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
 });
 
 function drawToCanvas(targetTabId) {
-  if (!sendframesstatus)
-    return;
+  if (!sendframesstatus) return;
   if (!video.paused) {
+    // Adjust coordinates based on rectangle and viewport
     ctx.clearRect(0, 0, rect.width, rect.height);
-    ctx.drawImage(video, rect.x, rect.y, rect.width, rect.height, 0, 0, rect.width, rect.height);
-    // Send frame data back to the worker
+
+    // Use adjusted Y coordinate
+    ctx.drawImage(
+      video,
+      rect.x,  // X coordinate (same as before)
+      rect.y + yoffset,  // Adjusted Y coordinate
+      rect.width,
+      rect.height,
+      0,
+      0,
+      rect.width,
+      rect.height
+    );
+
+    // Get ImageData from the offscreen canvas
     const imageData = ctx.getImageData(0, 0, rect.width, rect.height);
+
+    // Send frame data back to the worker
     chrome.runtime.sendMessage({
       target: 'worker',
       type: 'frameData',
@@ -65,4 +83,4 @@ function drawToCanvas(targetTabId) {
   setTimeout(() => {
     drawToCanvas(targetTabId);
   }, 1000 / 30); // 30 FPS
-}   
+}

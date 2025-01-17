@@ -8,6 +8,8 @@ chrome.runtime.onInstalled.addListener(async () => {
 });
 
 chrome.action.onClicked.addListener(async (tab) => {
+  // Go full screen
+  //await chrome.windows.update(chrome.windows.WINDOW_ID_CURRENT, { state: 'fullscreen' });
   modelDetails = (await chrome.storage.local.get('modelDetails'))?.modelDetails;
   const modelDetailsPromise = createDeferredPromise();
   if (!modelDetails) {

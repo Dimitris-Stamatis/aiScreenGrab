@@ -1,8 +1,8 @@
 const video = document.createElement('video');
-//video.style="width: 100%";
 // Create an OffscreenCanvas
 const offscreenCanvas = new OffscreenCanvas(0, 0); // Adjust size as needed
 const ctx = offscreenCanvas.getContext('2d', { willReadFrequently: true });
+let stream = null;
 let rect = {
   x: 0,
   y: 0,
@@ -11,11 +11,14 @@ let rect = {
 };
 yoffset = 0;
 let sendframesstatus = false;
+
 chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
   if (message.target !== 'offscreen') return;
+
   switch (message.type) {
     case 'start-recording':
-      const stream = await navigator.mediaDevices.getUserMedia({
+      // Start tab capture
+      stream = await navigator.mediaDevices.getUserMedia({
         audio: false,
         video: {
           mandatory: {
@@ -27,19 +30,42 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
       video.srcObject = stream;
       await video.play();
       break;
+
     case 'start-frameCapture':
       sendframesstatus = true;
+      if (stream == null) {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: {
+          mandatory: {
+            chromeMediaSource: "tab",
+            chromeMediaSourceId: message.streamId,
+          },
+        },
+      });
+      }
+      video.srcObject = stream;
+      await video.play();
       // Draw video frames onto the OffscreenCanvas at intervals
       drawToCanvas(message.targetTabId); // Start drawing frames
       break;
+
     case 'stop-frameCapture':
       sendframesstatus = false;
+
+      // Stop the stream to release resources
+      if (stream) {
+        stream.getTracks().forEach((track) => track.stop());
+        stream = null;
+        video.srcObject = null; // Clear video source
+      }
       break;
+
     case 'rectUpdate':
       rect = message.rect;
       yoffset = message.yoffset;
       console.log('y offset:', yoffset);
-      console.log(message)
+      console.log(message);
       offscreenCanvas.width = rect.width;
       offscreenCanvas.height = rect.height;
       break;

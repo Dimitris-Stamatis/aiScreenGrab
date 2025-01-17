@@ -80,7 +80,7 @@
     });
 
     chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
-        console.log('message received:', message);
+        //console.log('message received:', message);
         switch (message.type) {
             case 'startDrawing':
                 startDrawing(message.aspectRatio);
@@ -180,7 +180,6 @@
     
             const rect = { x: rectX, y: rectY, width: rectWidth, height: rectHeight };
             updateRectStyle(rectX, rectY, rectWidth, rectHeight);
-    
             chrome.runtime.sendMessage({
                 target: 'worker',
                 type: 'rectUpdate',
@@ -210,7 +209,7 @@
             e.preventDefault();
             const parent = e.target.parentElement;
             // move the parent element along
-            const rect = parent.getBoundingClientRect();
+            let rect = parent.getBoundingClientRect();
             const offsetX = e.clientX - rect.left;
             const offsetY = e.clientY - rect.top;
             const maxX = window.innerWidth - rect.width;
@@ -227,7 +226,7 @@
                     chrome.runtime.sendMessage({
                         target: 'worker',
                         type: 'rectUpdate',
-                        rect,
+                        rect: { x, y, width: rectWidth, height: rectHeight },
                         yoffset: window.outerHeight - window.innerHeight
                     });
                 }

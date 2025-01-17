@@ -16,34 +16,21 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
   if (message.target !== 'offscreen') return;
 
   switch (message.type) {
-    case 'start-recording':
-      // Start tab capture
-      stream = await navigator.mediaDevices.getUserMedia({
-        audio: false,
-        video: {
-          mandatory: {
-            chromeMediaSource: "tab",
-            chromeMediaSourceId: message.streamId,
-          },
-        },
-      });
-      video.srcObject = stream;
-      await video.play();
-      break;
-
     case 'start-frameCapture':
-      sendframesstatus = true;
       if (stream == null) {
-      stream = await navigator.mediaDevices.getUserMedia({
-        audio: false,
-        video: {
-          mandatory: {
-            chromeMediaSource: "tab",
-            chromeMediaSourceId: message.streamId,
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: {
+            mandatory: {
+              chromeMediaSource: "tab",
+              chromeMediaSourceId: message.streamId,
+            },
           },
-        },
-      });
+        }).catch((error) => {
+          console.error('Error accessing media devices:', error);
+        });
       }
+      sendframesstatus = true;
       video.srcObject = stream;
       await video.play();
       // Draw video frames onto the OffscreenCanvas at intervals
@@ -52,13 +39,8 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
 
     case 'stop-frameCapture':
       sendframesstatus = false;
-
-      // Stop the stream to release resources
-      if (stream) {
-        stream.getTracks().forEach((track) => track.stop());
-        stream = null;
-        video.srcObject = null; // Clear video source
-      }
+      video.pause();
+      video.srcObject = null;
       break;
 
     case 'rectUpdate':

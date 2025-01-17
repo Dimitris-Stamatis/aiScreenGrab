@@ -2,6 +2,7 @@ import { loadModel, predict } from "./utils/modelHelpers.mjs";
 
 let modelLoaded = null;
 let modelDetails = {};
+let streamId = null;
 
 chrome.runtime.onInstalled.addListener(async () => {
   console.log('Extension installed.');
@@ -58,16 +59,10 @@ chrome.action.onClicked.addListener(async (tab) => {
   if ((await isTabCaptured(currentTab))) {
     console.log('Tab is already being captured.');
   } else {
-    const streamId = await chrome.tabCapture.getMediaStreamId({
+    streamId = await chrome.tabCapture.getMediaStreamId({
       targetTabId: tab.id
     });
 
-    chrome.runtime.sendMessage({
-      target: 'offscreen',
-      type: 'start-recording',
-      streamId: streamId,
-      aspectRatio
-    });
   }
 
   chrome.tabs.sendMessage(currentTab, {
@@ -84,8 +79,18 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
       chrome.runtime.sendMessage({
         target: 'offscreen',
         type: `${message.action}-frameCapture`,
-        targetTabId: sender.tab.id
+        targetTabId: sender.tab.id,
+        streamId,
       });
+      if (message.action === 'start') {
+        chrome.windows.getCurrent((window) => {
+          chrome.windows.update(window.id, { state: 'fullscreen' });
+        });
+      } else {
+        chrome.windows.getCurrent((window) => {
+          chrome.windows.update(window.id, { state: 'normal' });
+        });
+      }
       break;
     case 'frameData':
       console.log('Frame data received:', message.imageData);

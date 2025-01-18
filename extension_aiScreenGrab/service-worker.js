@@ -41,33 +41,21 @@ chrome.action.onClicked.addListener(async (tab) => {
     target: { tabId: currentTab },
     files: ['injected.css'],
   });
-  const existingContexts = await chrome.runtime.getContexts({});
-
-  const offscreenDocument = existingContexts.find(
-    (c) => c.contextType === 'OFFSCREEN_DOCUMENT'
-  );
-
-  if (!offscreenDocument) {
-    await chrome.offscreen.createDocument({
-      url: 'offscreen.html',
-      reasons: ['USER_MEDIA'],
-      justification: 'Recording from chrome.tabCapture API',
-    });
-  }
 
   const aspectRatio = modelDetails.inputShape;
   if ((await isTabCaptured(currentTab))) {
     console.log('Tab is already being captured.');
   } else {
     streamId = await chrome.tabCapture.getMediaStreamId({
-      targetTabId: tab.id
+      targetTabId: tab.id,
+      consumerTabId: tab.id,
     });
-
   }
 
   chrome.tabs.sendMessage(currentTab, {
     type: 'startDrawing',
-    aspectRatio
+    aspectRatio,
+    streamId,
   });
 });
 
@@ -76,12 +64,6 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
   console.log(message);
   switch (message.type) {
     case 'predict':
-      chrome.runtime.sendMessage({
-        target: 'offscreen',
-        type: `${message.action}-frameCapture`,
-        targetTabId: sender.tab.id,
-        streamId,
-      });
       if (message.action === 'start') {
         chrome.windows.getCurrent((window) => {
           chrome.windows.update(window.id, { state: 'fullscreen' });
@@ -108,10 +90,10 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
         predictions = predictions.slice(0, 5);
         console.log(predictions);
         
-        chrome.tabs.sendMessage(message.targetTabId, {
+        chrome.tabs.sendMessage(sender.tab.id, {
           type: 'predictions',
           predictions,
-          imageData: message.imageData
+          imageData: message.imageData,
         });
       } else {
         console.error("Invalid image data received.");
@@ -120,19 +102,9 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
     case 'configureModel':
       configureModel();
       break;
-    case 'rectUpdate':
-      chrome.runtime.sendMessage({
-        target: 'offscreen',
-        type: 'rectUpdate',
-        rect: message.rect,
-        yoffset: message.yoffset,
-        tabid: sender.tab.id
-      });
-      break;
   }
   return true;
 });
-
 
 function createDeferredPromise() {
   let resolve, reject;

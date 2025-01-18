@@ -27,6 +27,7 @@
     let aspectRatioLocal = localStorage.getItem('aspectRatio') || null;
     let rectState = JSON.parse(localStorage.getItem('rectState')) || null;
     let isPredicting = localStorage.getItem('isPredicting') === 'true';
+    let stream = null;
 
     const container = document.getElementById('__extension_aiScreen');
     let rectX, rectY, rectWidth, rectHeight;
@@ -70,19 +71,24 @@
         chrome.runtime.sendMessage({ target: 'worker', type: 'configureModel' });
     });
 
-    uiElements.predictbutton.addEventListener('click', (e) => {
-        const action = e.target.dataset.for;
-        if (action != 'start' && action != 'stop') return;
-        chrome.runtime.sendMessage({ target: 'worker', type: 'predict', action });
-        e.target.dataset.for = action === 'start' ? 'stop' : 'start';
-        e.target.textContent = action === 'start' ? 'Stop predictions' : 'Start predictions';
-        localStorage.setItem('isPredicting', action === 'start');
-    });
-
     chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
         //console.log('message received:', message);
         switch (message.type) {
             case 'startDrawing':
+                console.log(message);
+                if (stream == null) {
+                    stream = await navigator.mediaDevices.getUserMedia({
+                        audio: false,
+                        video: {
+                            mandatory: {
+                                chromeMediaSource: "tab",
+                                chromeMediaSourceId: message.streamId,
+                            },
+                        },
+                    }).catch((error) => {
+                        console.error('Error accessing media devices:', error);
+                    });
+                }
                 startDrawing(message.aspectRatio);
                 break;
             case 'predictions':
@@ -180,29 +186,11 @@
     
             const rect = { x: rectX, y: rectY, width: rectWidth, height: rectHeight };
             updateRectStyle(rectX, rectY, rectWidth, rectHeight);
-            chrome.runtime.sendMessage({
-                target: 'worker',
-                type: 'rectUpdate',
-                rect,
-                yoffset: window.outerHeight - window.innerHeight
-            });
             document.removeEventListener('mousemove', handleMouseMove);
             document.removeEventListener('mouseup', handleMouseUp);
             document.removeEventListener('mousedown', handleMouseDown);
         }
     }
-    
-    function updateRectStyle(rectX, rectY, rectWidth, rectHeight) {
-        uiElements.rect.style.left = `${rectX}px`;
-        uiElements.rect.style.top = `${rectY}px`;
-        uiElements.rect.style.width = `${rectWidth}px`;
-        uiElements.rect.style.height = `${rectHeight}px`;
-    
-        const rect = { x: rectX, y: rectY, width: rectWidth, height: rectHeight };
-        localStorage.setItem('rectState', JSON.stringify(rect));
-    }
-    
-    
 
     uiElements.draggers.forEach((dragger) => {
         dragger.addEventListener('mousedown', (e) => {
@@ -223,12 +211,6 @@
                 document.removeEventListener('mousemove', handleDrag);
                 if (dragger.parentElement.classList.contains('__extension_aiScreen-rect')) {
                     updateRectStyle(x, y, rectWidth, rectHeight);
-                    chrome.runtime.sendMessage({
-                        target: 'worker',
-                        type: 'rectUpdate',
-                        rect: { x, y, width: rectWidth, height: rectHeight },
-                        yoffset: window.outerHeight - window.innerHeight
-                    });
                 }
             });
 
@@ -240,4 +222,72 @@
             }
         });
     });
+
+    const video = document.createElement('video');
+    const offscreenCanvas = new OffscreenCanvas(0, 0);
+    const ctx = offscreenCanvas.getContext('2d', { willReadFrequently: true });
+
+    let sendframesstatus = false;
+        
+    function updateRectStyle(rectX, rectY, rectWidth, rectHeight) {
+        uiElements.rect.style.left = `${rectX}px`;
+        uiElements.rect.style.top = `${rectY}px`;
+        uiElements.rect.style.width = `${rectWidth}px`;
+        uiElements.rect.style.height = `${rectHeight}px`;
+    
+        const rect = { x: rectX, y: rectY, width: rectWidth, height: rectHeight };
+        offscreenCanvas.width = rectWidth;
+        offscreenCanvas.height = rectHeight;
+        localStorage.setItem('rectState', JSON.stringify(rect));
+    }
+
+    uiElements.predictbutton.addEventListener('click', async (e) => {
+        const action = e.target.dataset.for;
+        if (action != 'start' && action != 'stop') return;
+        e.target.dataset.for = action === 'start' ? 'stop' : 'start';
+        e.target.textContent = action === 'start' ? 'Stop predictions' : 'Start predictions';
+        chrome.runtime.sendMessage({ target: 'worker', type: 'predict', action });
+        localStorage.setItem('isPredicting', action === 'start');
+        if (action == 'start') {
+            console.log(stream);
+            video.srcObject = stream;
+            sendframesstatus = true;
+            await video.play();
+        } else {
+            sendframesstatus = false;
+            video.pause();
+            video.srcObject = null;
+        }
+    });
+
+    video.addEventListener('play', () => {
+        console.log('Video playing');
+        drawToCanvas();
+    });
+
+    function drawToCanvas() {
+        if (!sendframesstatus) return;
+        ctx.drawImage(
+            video,
+            rectX,
+            rectY + window.outerHeight - window.innerHeight,
+            rectWidth,
+            rectHeight,
+            0,
+            0,
+            offscreenCanvas.width,
+            offscreenCanvas.height
+        );
+        const imageData = ctx.getImageData(0, 0, offscreenCanvas.width, offscreenCanvas.height);
+        chrome.runtime.sendMessage({
+            target: 'worker',
+            type: 'frameData',
+            imageData: {
+                data: Array.from(imageData.data),
+                width: imageData.width,
+                height: imageData.height
+            }
+        });
+        requestAnimationFrame(drawToCanvas);
+    }
 })();

@@ -10,7 +10,7 @@ chrome.runtime.onInstalled.addListener(async () => {
 
 chrome.action.onClicked.addListener(async (tab) => {
   // Go full screen
-  //await chrome.windows.update(chrome.windows.WINDOW_ID_CURRENT, { state: 'fullscreen' });
+  await chrome.windows.update(chrome.windows.WINDOW_ID_CURRENT, { state: 'fullscreen' });
   modelDetails = (await chrome.storage.local.get('modelDetails'))?.modelDetails;
   const modelDetailsPromise = createDeferredPromise();
   if (!modelDetails) {
@@ -43,14 +43,12 @@ chrome.action.onClicked.addListener(async (tab) => {
   });
 
   const aspectRatio = modelDetails.inputShape;
-  if ((await isTabCaptured(currentTab))) {
-    console.log('Tab is already being captured.');
-  } else {
-    streamId = await chrome.tabCapture.getMediaStreamId({
-      targetTabId: tab.id,
-      consumerTabId: tab.id,
-    });
-  }
+
+  streamId = await chrome.tabCapture.getMediaStreamId({
+    targetTabId: tab.id,
+    consumerTabId: tab.id,
+  });
+  chrome.storage.local.set({ streamId });
 
   chrome.tabs.sendMessage(currentTab, {
     type: 'startDrawing',
@@ -66,6 +64,8 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
     case 'predict':
       if (message.action === 'start') {
         chrome.windows.getCurrent((window) => {
+          if (window.state === 'fullscreen')
+            return;
           chrome.windows.update(window.id, { state: 'fullscreen' });
         });
       } else {
@@ -89,7 +89,7 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
         // keep only the top 5 predictions
         predictions = predictions.slice(0, 5);
         console.log(predictions);
-        
+
         chrome.tabs.sendMessage(sender.tab.id, {
           type: 'predictions',
           predictions,

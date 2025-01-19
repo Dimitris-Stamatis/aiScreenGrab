@@ -28,6 +28,7 @@
     let rectState = JSON.parse(localStorage.getItem('rectState')) || null;
     let isPredicting = localStorage.getItem('isPredicting') === 'true';
     let stream = null;
+    let mainRect = null;
 
     const container = document.getElementById('__extension_aiScreen');
     let rectX, rectY, rectWidth, rectHeight;
@@ -96,7 +97,7 @@
                     return `<div>${label}: ${probability.toFixed(2)}</div>`;
                 }).join('');
                 uiElements.results.innerHTML = results;
-                const reconstructedImageData = new ImageData(
+                /*const reconstructedImageData = new ImageData(
                     new Uint8ClampedArray(message.imageData.data),
                     message.imageData.width,
                     message.imageData.height
@@ -104,7 +105,7 @@
                 uiElements.canvas.width = message.imageData.width;
                 uiElements.canvas.height = message.imageData.height;
                 const ctx = uiElements.canvas.getContext('2d');
-                ctx.putImageData(reconstructedImageData, 0, 0);
+                ctx.putImageData(reconstructedImageData, 0, 0);*/
                 break;
         }
         return true;
@@ -120,75 +121,75 @@
         }
         uiElements.rect.classList.remove('active');
         uiElements.overlay.classList.add('active');
-    
+
         let startX = 0;
         let startY = 0;
         let drawing = false;
-        
+
         uiElements.overlay.addEventListener('mousedown', handleMouseDown);
         document.addEventListener('mousemove', handleMouseMove);
         document.addEventListener('mouseup', handleMouseUp);
         const bodyOverflowBak = document.body.style.overflow;
-    
+
         function handleMouseDown(e) {
             startX = e.clientX; // Relative to overlay (X axis)
             startY = e.clientY + window.scrollY; // Relative to overlay (Y axis + scroll)
             drawing = true;
-    
+
             uiElements.rect.style.left = `${startX}px`;
             uiElements.rect.style.top = `${startY}px`;
             uiElements.rect.style.width = `0px`;
             uiElements.rect.style.height = `0px`;
             uiElements.rect.classList.add('active');
             document.body.style.overflow = 'hidden';
+            uiElements.overlay.removeEventListener('mousedown', handleMouseDown);
         }
-    
+
         function handleMouseMove(e) {
             if (!drawing) return;
-    
-            const currentX = e.clientX ;  // Adjusted X axis
+
+            const currentX = e.clientX;  // Adjusted X axis
             const currentY = e.clientY + window.scrollY; // Adjusted Y axis
-    
+
             rectWidth = Math.abs(currentX - startX);
             rectHeight = Math.abs(currentY - startY);
-    
+
             if (aspectRatioLocal) {
                 const ratio = aspectRatioLocal.split('x').map(Number);
                 const aspectRatio = ratio[1] / ratio[0];
-    
+
                 let newHeight = rectWidth * aspectRatio;
-    
+
                 if (rectY + newHeight > window.innerHeight) {
                     newHeight = window.innerHeight - rectY;
                     rectWidth = newHeight / aspectRatio;
                 }
-    
+
                 if (rectX + rectWidth > window.innerWidth) {
                     rectWidth = window.innerWidth - rectX;
                     newHeight = rectWidth * aspectRatio;
                 }
-    
+
                 rectHeight = newHeight;
             }
-    
+
             rectX = Math.min(Math.max(0, startX), window.innerWidth - rectWidth);
             rectY = Math.min(Math.max(0, startY), window.innerHeight - rectHeight);
-    
+
             updateRectStyle(rectX, rectY, rectWidth, rectHeight);
         }
-    
+
         function handleMouseUp(e) {
             drawing = false;
             uiElements.overlay.classList.remove('active');
             uiElements.redrawButton.classList.add('active');
             uiElements.modelUI.classList.add('active');
             document.body.style.overflow = bodyOverflowBak;
-    
-            const rect = { x: rectX, y: rectY, width: rectWidth, height: rectHeight };
+
+            mainRect = { x: rectX, y: rectY, width: rectWidth, height: rectHeight };
             updateRectStyle(rectX, rectY, rectWidth, rectHeight);
             document.removeEventListener('mousemove', handleMouseMove);
             document.removeEventListener('mouseup', handleMouseUp);
-            document.removeEventListener('mousedown', handleMouseDown);
         }
     }
 
@@ -218,7 +219,7 @@
                 x = Math.min(Math.max(0, e.clientX - offsetX), maxX);
                 y = Math.min(Math.max(0, e.clientY - offsetY), maxY);
                 parent.style.left = `${x}px`;
-                parent.style.top = `${y}px`;                
+                parent.style.top = `${y}px`;
             }
         });
     });
@@ -228,17 +229,17 @@
     const ctx = offscreenCanvas.getContext('2d', { willReadFrequently: true });
 
     let sendframesstatus = false;
-        
+
     function updateRectStyle(rectX, rectY, rectWidth, rectHeight) {
         uiElements.rect.style.left = `${rectX}px`;
         uiElements.rect.style.top = `${rectY}px`;
         uiElements.rect.style.width = `${rectWidth}px`;
         uiElements.rect.style.height = `${rectHeight}px`;
-    
-        const rect = { x: rectX, y: rectY, width: rectWidth, height: rectHeight };
+
+        mainRect = { x: rectX, y: rectY, width: rectWidth, height: rectHeight };
         offscreenCanvas.width = rectWidth;
         offscreenCanvas.height = rectHeight;
-        localStorage.setItem('rectState', JSON.stringify(rect));
+        localStorage.setItem('rectState', JSON.stringify(mainRect));
     }
 
     uiElements.predictbutton.addEventListener('click', async (e) => {
@@ -265,20 +266,32 @@
         drawToCanvas();
     });
 
+    let previousImageDataHash = 0;
+
     function drawToCanvas() {
         if (!sendframesstatus) return;
         ctx.drawImage(
             video,
-            rectX,
-            rectY + window.outerHeight - window.innerHeight,
-            rectWidth,
-            rectHeight,
+            mainRect.x,
+            mainRect.y + window.outerHeight - window.innerHeight,
+            mainRect.width,
+            mainRect.height,
             0,
             0,
             offscreenCanvas.width,
             offscreenCanvas.height
         );
         const imageData = ctx.getImageData(0, 0, offscreenCanvas.width, offscreenCanvas.height);
+        const hash = hashImageData(imageData.data);
+        if (hash === previousImageDataHash) {
+            requestAnimationFrame(drawToCanvas);
+            return;
+        }
+        previousImageDataHash = hash;
+        uiElements.canvas.width = imageData.width;
+        uiElements.canvas.height = imageData.height;
+        const ctxInSite = uiElements.canvas.getContext('2d');
+        ctxInSite.putImageData(imageData, 0, 0);
         chrome.runtime.sendMessage({
             target: 'worker',
             type: 'frameData',
@@ -289,5 +302,14 @@
             }
         });
         requestAnimationFrame(drawToCanvas);
+    }
+
+    function hashImageData(data) {
+        let hash = 0;
+        for (let i = 0; i < data.length; i++) {
+            hash = ((hash << 5) - hash) + data[i];
+            hash |= 0;
+        }
+        return hash;
     }
 })();

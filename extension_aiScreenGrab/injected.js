@@ -1,116 +1,123 @@
 (async () => {
-    const htmltoinject = `
-    <div id="__extension_aiScreen">
+    // --- Inject the Extension UI ---
+    const extensionHTML = `
+      <div id="__extension_aiScreen">
         <div class="__extension_aiScreen-modelUI" data-dragable="true">
-            <button class="__extension_aiScreen-predict" data-for="start">Start predictions</button>
-            <button class="__extension_aiScreen-drawArea">Draw Area</button>
-            <button class="__extension_aiScreen-configureModel">Configure Model</button>
-            <div class="__extension_aiScreen-results"></div>
+          <button class="__extension_aiScreen-predict" data-for="start">Start predictions</button>
+          <button class="__extension_aiScreen-drawArea">Draw Area</button>
+          <button class="__extension_aiScreen-configureModel">Configure Model</button>
+          <div class="__extension_aiScreen-results"></div>
         </div>
         <div class="__extension_aiScreen-overlayElements">
-            <div class="__extension_aiScreen-overlay"></div>
-            <div class="__extension_aiScreen-rect" data-dragable="true"></div>
-            <canvas class="__extension_aiScreen-canvas"></canvas>
+          <div class="__extension_aiScreen-overlay"></div>
+          <div class="__extension_aiScreen-rect" data-dragable="true"></div>
+          <canvas class="__extension_aiScreen-canvas"></canvas>
         </div>
-    </div>`;
-    const dragableIconURL = chrome.runtime.getURL('icons/drag.svg');
-    const dragableIcon = document.createElement('img');
-    dragableIcon.src = dragableIconURL;
-    dragableIcon.alt = 'Drag';
-    dragableIcon.classList.add('__extension_aiScreen-dragIcon');
+      </div>
+    `;
+    document.body.insertAdjacentHTML('beforeend', extensionHTML);
 
-    document.body.insertAdjacentHTML('beforeend', htmltoinject);
+    // --- Create and Append Drag Icon ---
+    const dragIconURL = chrome.runtime.getURL('icons/drag.svg');
+    const createDragIcon = () => {
+        const icon = document.createElement('img');
+        icon.src = dragIconURL;
+        icon.alt = 'Drag';
+        icon.classList.add('__extension_aiScreen-dragIcon');
+        return icon;
+    };
+
     document.querySelectorAll('#__extension_aiScreen [data-dragable="true"]').forEach((element) => {
-        element.appendChild(dragableIcon.cloneNode());
+        element.appendChild(createDragIcon());
     });
 
+    // --- Initialize State from localStorage ---
     let aspectRatioLocal = localStorage.getItem('aspectRatio') || null;
-    let rectState = JSON.parse(localStorage.getItem('rectState')) || null;
-    let isPredicting = localStorage.getItem('isPredicting') === 'true';
+    const rectState = JSON.parse(localStorage.getItem('rectState')) || null;
+    const isPredicting = localStorage.getItem('isPredicting') === 'true';
     let stream = null;
     let mainRect = null;
-
-    const container = document.getElementById('__extension_aiScreen');
     let rectX, rectY, rectWidth, rectHeight;
-    const uiElements = {
+
+    // --- Cache UI Elements ---
+    const container = document.getElementById('__extension_aiScreen');
+    const ui = {
         redrawButton: container.querySelector('.__extension_aiScreen-drawArea'),
         overlay: container.querySelector('.__extension_aiScreen-overlay'),
         rect: container.querySelector('.__extension_aiScreen-rect'),
         canvas: container.querySelector('.__extension_aiScreen-canvas'),
         modelUI: container.querySelector('.__extension_aiScreen-modelUI'),
-        predictbutton: container.querySelector('.__extension_aiScreen-predict'),
+        predictButton: container.querySelector('.__extension_aiScreen-predict'),
         configureModel: container.querySelector('.__extension_aiScreen-configureModel'),
-        video: document.createElement('video'),
         results: container.querySelector('.__extension_aiScreen-results'),
         draggers: container.querySelectorAll('.__extension_aiScreen-dragIcon')
     };
+    const videoElement = document.createElement('video');
 
+    // --- Restore Saved Rectangle (if any) ---
     if (rectState) {
-        // Restore rectangle if saved in localStorage
-        rectX = rectState.x;
-        rectY = rectState.y;
-        rectWidth = rectState.width;
-        rectHeight = rectState.height;
-        uiElements.rect.style.left = `${rectX}px`;
-        uiElements.rect.style.top = `${rectY}px`;
-        uiElements.rect.style.width = `${rectWidth}px`;
-        uiElements.rect.style.height = `${rectHeight}px`;
-        uiElements.rect.classList.add('active');
+        ({ x: rectX, y: rectY, width: rectWidth, height: rectHeight } = rectState);
+        Object.assign(ui.rect.style, {
+            left: `${rectX}px`,
+            top: `${rectY}px`,
+            width: `${rectWidth}px`,
+            height: `${rectHeight}px`
+        });
+        ui.rect.classList.add('active');
+        mainRect = { x: rectX, y: rectY, width: rectWidth, height: rectHeight };
     }
 
+    // --- Update Prediction Button if Already Active ---
     if (isPredicting) {
-        uiElements.predictbutton.dataset.for = 'stop';
-        uiElements.predictbutton.textContent = 'Stop predictions';
+        ui.predictButton.dataset.for = 'stop';
+        ui.predictButton.textContent = 'Stop predictions';
     }
 
-    uiElements.redrawButton.addEventListener('click', () => {
+    // --- UI Button Event Listeners ---
+    ui.redrawButton.addEventListener('click', () => {
         startDrawing(aspectRatioLocal);
-        uiElements.redrawButton.classList.remove('active');
+        ui.redrawButton.classList.remove('active');
     });
 
-    uiElements.configureModel.addEventListener('click', () => {
+    ui.configureModel.addEventListener('click', () => {
         chrome.runtime.sendMessage({ target: 'worker', type: 'configureModel' });
     });
 
+    // --- Listen for Messages from Background/Worker ---
     chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
-        //console.log('message received:', message);
         switch (message.type) {
-            case 'startDrawing':
-                console.log(message);
-                if (stream == null) {
-                    stream = await navigator.mediaDevices.getUserMedia({
-                        audio: false,
-                        video: {
-                            mandatory: {
-                                chromeMediaSource: "tab",
-                                chromeMediaSourceId: message.streamId,
+            case 'startDrawing': {
+                console.log('Received startDrawing message:', message);
+                if (!stream) {
+                    try {
+                        stream = await navigator.mediaDevices.getUserMedia({
+                            audio: false,
+                            video: {
+                                mandatory: {
+                                    chromeMediaSource: "tab",
+                                    chromeMediaSourceId: message.streamId,
+                                },
                             },
-                        },
-                    }).catch((error) => {
+                        });
+                    } catch (error) {
                         console.error('Error accessing media devices:', error);
-                    });
+                    }
                 }
                 startDrawing(message.aspectRatio);
                 break;
-            case 'predictions':
-                const results = message.predictions.map(({ label, probability }) => {
-                    return `<div>${label}: ${probability.toFixed(2)}</div>`;
-                }).join('');
-                uiElements.results.innerHTML = results;
-                /*const reconstructedImageData = new ImageData(
-                    new Uint8ClampedArray(message.imageData.data),
-                    message.imageData.width,
-                    message.imageData.height
-                );
-                uiElements.canvas.width = message.imageData.width;
-                uiElements.canvas.height = message.imageData.height;
-                const ctx = uiElements.canvas.getContext('2d');
-                ctx.putImageData(reconstructedImageData, 0, 0);*/
+            }
+            case 'predictions': {
+                const predictionsHTML = message.predictions
+                    .map(({ label, probability }) => `<div>${label}: ${probability.toFixed(2)}</div>`)
+                    .join('');
+                ui.results.innerHTML = predictionsHTML;
                 break;
+            }
         }
         return true;
     });
 
+    // --- Drawing Functionality ---
     function startDrawing(aspectRatio = null) {
         if (aspectRatio) {
             aspectRatioLocal = aspectRatio;
@@ -119,159 +126,166 @@
         if (!aspectRatioLocal) {
             aspectRatioLocal = '1x1';
         }
-        uiElements.rect.classList.remove('active');
-        uiElements.overlay.classList.add('active');
+
+        ui.rect.classList.remove('active');
+        ui.overlay.classList.add('active');
 
         let startX = 0;
         let startY = 0;
         let drawing = false;
+        const originalBodyOverflow = document.body.style.overflow;
 
-        uiElements.overlay.addEventListener('mousedown', handleMouseDown);
-        document.addEventListener('mousemove', handleMouseMove);
-        document.addEventListener('mouseup', handleMouseUp);
-        const bodyOverflowBak = document.body.style.overflow;
-
-        function handleMouseDown(e) {
-            startX = e.clientX; // Relative to overlay (X axis)
-            startY = e.clientY + window.scrollY; // Relative to overlay (Y axis + scroll)
+        const handleMouseDown = (e) => {
+            startX = e.clientX;
+            startY = e.clientY + window.scrollY;
             drawing = true;
 
-            uiElements.rect.style.left = `${startX}px`;
-            uiElements.rect.style.top = `${startY}px`;
-            uiElements.rect.style.width = `0px`;
-            uiElements.rect.style.height = `0px`;
-            uiElements.rect.classList.add('active');
+            Object.assign(ui.rect.style, {
+                left: `${startX}px`,
+                top: `${startY}px`,
+                width: '0px',
+                height: '0px'
+            });
+            ui.rect.classList.add('active');
             document.body.style.overflow = 'hidden';
-            uiElements.overlay.removeEventListener('mousedown', handleMouseDown);
-        }
+            ui.overlay.removeEventListener('mousedown', handleMouseDown);
+        };
 
-        function handleMouseMove(e) {
+        const handleMouseMove = (e) => {
             if (!drawing) return;
-
-            const currentX = e.clientX;  // Adjusted X axis
-            const currentY = e.clientY + window.scrollY; // Adjusted Y axis
+            const currentX = e.clientX;
+            const currentY = e.clientY + window.scrollY;
 
             rectWidth = Math.abs(currentX - startX);
             rectHeight = Math.abs(currentY - startY);
 
             if (aspectRatioLocal) {
-                const ratio = aspectRatioLocal.split('x').map(Number);
-                const aspectRatio = ratio[1] / ratio[0];
+                const [w, h] = aspectRatioLocal.split('x').map(Number);
+                const ratio = h / w;
+                let adjustedHeight = rectWidth * ratio;
 
-                let newHeight = rectWidth * aspectRatio;
-
-                if (rectY + newHeight > window.innerHeight) {
-                    newHeight = window.innerHeight - rectY;
-                    rectWidth = newHeight / aspectRatio;
+                if (startY + adjustedHeight > window.innerHeight) {
+                    adjustedHeight = window.innerHeight - startY;
+                    rectWidth = adjustedHeight / ratio;
                 }
-
-                if (rectX + rectWidth > window.innerWidth) {
-                    rectWidth = window.innerWidth - rectX;
-                    newHeight = rectWidth * aspectRatio;
+                if (startX + rectWidth > window.innerWidth) {
+                    rectWidth = window.innerWidth - startX;
+                    adjustedHeight = rectWidth * ratio;
                 }
-
-                rectHeight = newHeight;
+                rectHeight = adjustedHeight;
             }
 
-            rectX = Math.min(Math.max(0, startX), window.innerWidth - rectWidth);
-            rectY = Math.min(Math.max(0, startY), window.innerHeight - rectHeight);
+            rectX = Math.min(startX, startX + rectWidth);
+            rectY = Math.min(startY, startY + rectHeight);
 
             updateRectStyle(rectX, rectY, rectWidth, rectHeight);
-        }
+        };
 
-        function handleMouseUp(e) {
+        const handleMouseUp = () => {
             drawing = false;
-            uiElements.overlay.classList.remove('active');
-            uiElements.redrawButton.classList.add('active');
-            uiElements.modelUI.classList.add('active');
-            document.body.style.overflow = bodyOverflowBak;
+            ui.overlay.classList.remove('active');
+            ui.redrawButton.classList.add('active');
+            ui.modelUI.classList.add('active');
+            document.body.style.overflow = originalBodyOverflow;
 
             mainRect = { x: rectX, y: rectY, width: rectWidth, height: rectHeight };
             updateRectStyle(rectX, rectY, rectWidth, rectHeight);
             document.removeEventListener('mousemove', handleMouseMove);
             document.removeEventListener('mouseup', handleMouseUp);
-        }
+        };
+
+        ui.overlay.addEventListener('mousedown', handleMouseDown);
+        document.addEventListener('mousemove', handleMouseMove);
+        document.addEventListener('mouseup', handleMouseUp);
     }
 
-    uiElements.draggers.forEach((dragger) => {
+    // --- Draggable Elements ---
+    ui.draggers.forEach((dragger) => {
         dragger.addEventListener('mousedown', (e) => {
             e.preventDefault();
-            const parent = e.target.parentElement;
-            // move the parent element along
-            let rect = parent.getBoundingClientRect();
-            const offsetX = e.clientX - rect.left;
-            const offsetY = e.clientY - rect.top;
-            const maxX = window.innerWidth - rect.width;
-            const maxY = window.innerHeight - rect.height;
-            const boundingbox = uiElements.rect.getBoundingClientRect();
-            let x = boundingbox.left;
-            let y = boundingbox.top;
+            const parentElement = e.target.parentElement;
+            const parentRect = parentElement.getBoundingClientRect();
+            const offsetX = e.clientX - parentRect.left;
+            const offsetY = e.clientY - parentRect.top;
+            const maxX = window.innerWidth - parentRect.width;
+            const maxY = window.innerHeight - parentRect.height;
+            // Track the initial position
+            let dragX = parentRect.left;
+            let dragY = parentRect.top;
+
+            const handleDrag = (event) => {
+                dragX = Math.min(Math.max(0, event.clientX - offsetX), maxX);
+                dragY = Math.min(Math.max(0, event.clientY - offsetY), maxY);
+                parentElement.style.left = `${dragX}px`;
+                parentElement.style.top = `${dragY}px`;
+            };
+
+            const stopDrag = () => {
+                document.removeEventListener('mousemove', handleDrag);
+                document.removeEventListener('mouseup', stopDrag);
+                // Update the main rectangle's position if this is the main draggable element
+                if (parentElement.classList.contains('__extension_aiScreen-rect')) {
+                    updateRectStyle(dragX, dragY, rectWidth, rectHeight);
+                }
+            };
 
             document.addEventListener('mousemove', handleDrag);
-            document.addEventListener('mouseup', () => {
-                document.removeEventListener('mousemove', handleDrag);
-                if (dragger.parentElement.classList.contains('__extension_aiScreen-rect')) {
-                    updateRectStyle(x, y, rectWidth, rectHeight);
-                }
-            });
-
-            function handleDrag(e) {
-                x = Math.min(Math.max(0, e.clientX - offsetX), maxX);
-                y = Math.min(Math.max(0, e.clientY - offsetY), maxY);
-                parent.style.left = `${x}px`;
-                parent.style.top = `${y}px`;
-            }
+            document.addEventListener('mouseup', stopDrag);
         });
     });
 
-    const video = document.createElement('video');
+    // --- Video and Offscreen Canvas Setup for Predictions ---
     const offscreenCanvas = new OffscreenCanvas(0, 0);
-    const ctx = offscreenCanvas.getContext('2d', { willReadFrequently: true });
+    const offscreenCtx = offscreenCanvas.getContext('2d', { willReadFrequently: true });
+    let shouldSendFrames = false;
+    let previousImageDataHash = 0;
 
-    let sendframesstatus = false;
+    // --- Update Rectangle Style and Save State ---
+    function updateRectStyle(x, y, width, height) {
+        ui.rect.style.left = `${x}px`;
+        ui.rect.style.top = `${y}px`;
+        ui.rect.style.width = `${width}px`;
+        ui.rect.style.height = `${height}px`;
 
-    function updateRectStyle(rectX, rectY, rectWidth, rectHeight) {
-        uiElements.rect.style.left = `${rectX}px`;
-        uiElements.rect.style.top = `${rectY}px`;
-        uiElements.rect.style.width = `${rectWidth}px`;
-        uiElements.rect.style.height = `${rectHeight}px`;
-
-        mainRect = { x: rectX, y: rectY, width: rectWidth, height: rectHeight };
-        offscreenCanvas.width = rectWidth;
-        offscreenCanvas.height = rectHeight;
+        mainRect = { x, y, width, height };
+        offscreenCanvas.width = width;
+        offscreenCanvas.height = height;
         localStorage.setItem('rectState', JSON.stringify(mainRect));
     }
 
-    uiElements.predictbutton.addEventListener('click', async (e) => {
-        const action = e.target.dataset.for;
-        if (action != 'start' && action != 'stop') return;
-        e.target.dataset.for = action === 'start' ? 'stop' : 'start';
-        e.target.textContent = action === 'start' ? 'Stop predictions' : 'Start predictions';
-        chrome.runtime.sendMessage({ target: 'worker', type: 'predict', action });
-        localStorage.setItem('isPredicting', action === 'start');
-        if (action == 'start') {
-            console.log(stream);
-            video.srcObject = stream;
-            sendframesstatus = true;
-            await video.play();
+    // --- Toggle Prediction Mode ---
+    ui.predictButton.addEventListener('click', async (e) => {
+        const currentAction = e.target.dataset.for;
+        if (currentAction !== 'start' && currentAction !== 'stop') return;
+
+        const newAction = currentAction === 'start' ? 'stop' : 'start';
+        e.target.dataset.for = newAction;
+        e.target.textContent = newAction === 'start' ? 'Start predictions' : 'Stop predictions';
+
+        chrome.runtime.sendMessage({ target: 'worker', type: 'predict', action: currentAction });
+        localStorage.setItem('isPredicting', currentAction === 'start');
+
+        if (currentAction === 'start') {
+            videoElement.srcObject = stream;
+            shouldSendFrames = true;
+            await videoElement.play();
         } else {
-            sendframesstatus = false;
-            video.pause();
-            video.srcObject = null;
+            shouldSendFrames = false;
+            videoElement.pause();
+            videoElement.srcObject = null;
         }
     });
 
-    video.addEventListener('play', () => {
+    videoElement.addEventListener('play', () => {
         console.log('Video playing');
-        drawToCanvas();
+        requestAnimationFrame(drawToCanvas);
     });
 
-    let previousImageDataHash = 0;
-
+    // --- Continuously Draw Video Frames to Canvas ---
     function drawToCanvas() {
-        if (!sendframesstatus) return;
-        ctx.drawImage(
-            video,
+        if (!shouldSendFrames || !mainRect) return;
+        offscreenCtx.drawImage(
+            videoElement,
             mainRect.x,
             mainRect.y + window.outerHeight - window.innerHeight,
             mainRect.width,
@@ -281,34 +295,35 @@
             offscreenCanvas.width,
             offscreenCanvas.height
         );
-        const imageData = ctx.getImageData(0, 0, offscreenCanvas.width, offscreenCanvas.height);
-        const hash = hashImageData(imageData.data);
-        if (hash === previousImageDataHash) {
-            requestAnimationFrame(drawToCanvas);
-            return;
+
+        const imageData = offscreenCtx.getImageData(0, 0, offscreenCanvas.width, offscreenCanvas.height);
+        const currentHash = hashImageData(imageData.data);
+
+        if (currentHash !== previousImageDataHash) {
+            previousImageDataHash = currentHash;
+            ui.canvas.width = imageData.width;
+            ui.canvas.height = imageData.height;
+            const siteCtx = ui.canvas.getContext('2d');
+            siteCtx.putImageData(imageData, 0, 0);
+            chrome.runtime.sendMessage({
+                target: 'worker',
+                type: 'frameData',
+                imageData: {
+                    data: Array.from(imageData.data),
+                    width: imageData.width,
+                    height: imageData.height
+                }
+            });
         }
-        previousImageDataHash = hash;
-        uiElements.canvas.width = imageData.width;
-        uiElements.canvas.height = imageData.height;
-        const ctxInSite = uiElements.canvas.getContext('2d');
-        ctxInSite.putImageData(imageData, 0, 0);
-        chrome.runtime.sendMessage({
-            target: 'worker',
-            type: 'frameData',
-            imageData: {
-                data: Array.from(imageData.data),
-                width: imageData.width,
-                height: imageData.height
-            }
-        });
         requestAnimationFrame(drawToCanvas);
     }
 
+    // --- Utility: Simple Hash Function for Image Data ---
     function hashImageData(data) {
         let hash = 0;
         for (let i = 0; i < data.length; i++) {
             hash = ((hash << 5) - hash) + data[i];
-            hash |= 0;
+            hash |= 0; // Convert to 32bit integer
         }
         return hash;
     }

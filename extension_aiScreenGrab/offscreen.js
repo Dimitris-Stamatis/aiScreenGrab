@@ -1,4 +1,6 @@
-import { predict } from "./utils/modelHelpers.mjs";
+import { model } from "@tensorflow/tfjs-layers";
+import { predict, loadModel } from "./utils/modelHelpers.mjs";
+import { startForAxis } from "@tensorflow/tfjs-core/dist/ops/slice_util";
 
 const video = document.createElement('video');
 // Create an OffscreenCanvas
@@ -14,11 +16,23 @@ let rect = {
 let yoffset = 0;
 let sendframesstatus = false;
 let targetTabId = null;
+let isPredicting = false;
+let modelLoaded = null;
+let modelDetails = null;
 
 chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
   if (message.target !== 'offscreen') return;
-
   switch (message.type) {
+    case 'releaseStream':
+      stream = null;
+      video.pause();
+      video.srcObject = null;
+      break;
+    case 'loadModel':
+      modelDetails = message.modelDetails;
+      modelLoaded = message.modelLoaded;
+      console.log('Model loaded:', modelLoaded);
+      break;
     case 'start-frameCapture':
       if (stream == null) {
         stream = await navigator.mediaDevices.getUserMedia({

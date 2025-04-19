@@ -21,6 +21,12 @@ chrome.action.onClicked.addListener(async (tab) => {
       if (areaName === 'local' && changes.modelDetails) {
         modelDetails = changes.modelDetails.newValue;
         modelLoaded = await loadModel(modelDetails.modelType);
+        chrome.runtime.sendMessage({
+          type: 'loadModel',
+          target: 'offscreen',
+          modelDetails,
+          modelLoaded,
+        });
         console.log('Model loaded:', modelLoaded);
         modelDetailsPromise.resolve();
         chrome.storage.onChanged.removeListener();
@@ -45,16 +51,25 @@ chrome.action.onClicked.addListener(async (tab) => {
 
   const aspectRatio = modelDetails.inputShape;
 
-  streamId = await chrome.tabCapture.getMediaStreamId({
-    targetTabId: tab.id,
-    consumerTabId: tab.id,
-  });
-  chrome.storage.local.set({ streamId });
+  // Check if the tab is already captured
+  if (await isTabCaptured(tab.id)) {
+    chrome.runtime.sendMessage({
+      type: 'releaseStream',
+      target: 'offscreen',
+    });
+  }
+  setTimeout(async () => {
+    streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id });
+    await chrome.storage.local.set({ streamId });
+    chrome.storage.local.set({ streamId });
 
-  chrome.tabs.sendMessage(currentTab, {
-    type: 'startDrawing',
-    aspectRatio,
-    streamId,
+
+    chrome.tabs.sendMessage(currentTab, {
+      type: 'startDrawing',
+      aspectRatio,
+      streamId,
+    });
+
   });
 
   // Create offscreen document for ML inference

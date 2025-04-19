@@ -3,7 +3,7 @@ import { build } from 'esbuild';
 const sharedOptions = {
   bundle: true,
   format: 'esm',
-  minify: true,
+  //minify: true,
   external: [],
   platform: 'browser',
   target: ['es2020']

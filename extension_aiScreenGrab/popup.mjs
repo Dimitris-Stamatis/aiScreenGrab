@@ -12,14 +12,25 @@ document.getElementById('modelDetails').addEventListener('submit', async (e) => 
     modelFiles = Array.from(selectedfiles);
   }
 
-  modelFiles.forEach(async (file) => {
-    await saveFile(file).catch(error => {
-      submitbutton.disabled = false;
-      alert('Failed to save file: ' + error.message);
+  try {
+    const savePromises = modelFiles.map(async (file) => {
+      if (!(file instanceof Blob)) {
+        throw new TypeError(`Invalid file type for ${file.name}`);
+      }
+      await saveFile(file);
+      console.log("Saved file:", file.name);
+      return file.name;
     });
-    console.log(file);
-    modelFileNames.push(file.name);
-  });
+  
+    // Wait for all files to be saved and collect their names
+    modelFileNames = await Promise.all(savePromises);
+  } catch (error) {
+    console.error("One or more files failed to save:", error);
+    alert('Failed to save file: ' + error.message);
+    submitbutton.disabled = false;
+    submitbutton.textContent = 'Save';
+    return; // Stop further execution if saving fails
+  }  
 
   const modelDetails = {
     inputShape: formdata.get('inputShape').toLowerCase(),

@@ -13,7 +13,7 @@
         "tabs"
     ],
     "background": {
-        "service_worker": "service-worker.js",
+        "service_worker": "dist/service-worker.bundle.js",
         "type": "module"
     },
     "action": {

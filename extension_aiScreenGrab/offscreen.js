@@ -1,3 +1,5 @@
+import { predict } from "./utils/modelHelpers.mjs";
+
 const video = document.createElement('video');
 // Create an OffscreenCanvas
 const offscreenCanvas = new OffscreenCanvas(0, 0); // Adjust size as needed
@@ -9,7 +11,7 @@ let rect = {
   width: 0,
   height: 0
 };
-yoffset = 0;
+let yoffset = 0;
 let sendframesstatus = false;
 let targetTabId = null;
 
@@ -36,13 +38,11 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
       targetTabId = message.targetTabId;
       await video.play();
       break;
-
     case 'stop-frameCapture':
       sendframesstatus = false;
       video.pause();
       video.srcObject = null;
       break;
-
     case 'rectUpdate':
       rect = message.rect;
       yoffset = message.yoffset;
@@ -52,24 +52,35 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
   }
 });
 
+let frameInterval = null;
+
 video.addEventListener('play', () => {
   console.log('Video playing');
-  drawToCanvas();
+  if (!frameInterval) {
+    frameInterval = setInterval(drawToCanvas, 1000 / 30); // max 30 FPS
+  }
 });
 
+video.addEventListener('pause', () => {
+  if (frameInterval) {
+    clearInterval(frameInterval);
+    frameInterval = null;
+  }
+});
 
-function drawToCanvas() {
-  console.log('Drawing to canvas');
+let previousImageDataHash = null;
+
+async function drawToCanvas() {
   if (!sendframesstatus) return;
-  console.log('Drawing to canvas 2');
-  // Adjust coordinates based on rectangle and viewport
+  if (isPredicting) return; // Prevent overlapping predictions
+  isPredicting = true;
+
   ctx.clearRect(0, 0, rect.width, rect.height);
 
-  // Use adjusted Y coordinate
   ctx.drawImage(
     video,
-    rect.x,  // X coordinate (same as before)
-    rect.y + yoffset,  // Adjusted Y coordinate
+    rect.x,
+    rect.y + yoffset,
     rect.width,
     rect.height,
     0,
@@ -78,19 +89,37 @@ function drawToCanvas() {
     rect.height
   );
 
-  // Get ImageData from the offscreen canvas
   const imageData = ctx.getImageData(0, 0, rect.width, rect.height);
+  const currentImageDataHash = hashImageData(imageData.data);
 
-  // Send frame data back to the worker
-  chrome.runtime.sendMessage({
-    target: 'worker',
-    type: 'frameData',
+  if (currentImageDataHash === previousImageDataHash) {
+    // Frame hasn't changed; skip sending
+    isPredicting = false;
+    return;
+  }
+
+  previousImageDataHash = currentImageDataHash;
+
+  let predictions = await predict(modelLoaded, imageData, modelDetails.inputShape);
+  isPredicting = false;
+  console.log(predictions);
+  chrome.tabs.sendMessage(targetTabId, {
+    type: 'predictions',
+    predictions,
     imageData: {
-      data: Array.from(imageData.data),  // Convert to a regular array for serialization
+      data: Array.from(imageData.data),
       width: imageData.width,
-      height: imageData.height
+      height: imageData.height,
     },
-    targetTabId
   });
-  requestAnimationFrame(drawToCanvas);
+}
+
+// --- Utility: Simple Hash Function for Image Data ---
+function hashImageData(data) {
+  let hash = 0;
+  for (let i = 0; i < data.length; i++) {
+    hash = ((hash << 5) - hash) + data[i];
+    hash |= 0; // Convert to 32bit integer
+  }
+  return hash;
 }

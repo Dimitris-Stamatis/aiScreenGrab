@@ -111,6 +111,17 @@
                     .map(({ label, probability }) => `<div>${label}: ${probability.toFixed(2)}</div>`)
                     .join('');
                 ui.results.innerHTML = predictionsHTML;
+                // update canvas with imagedata
+                const reconstructedImageData = new ImageData(
+                    new Uint8ClampedArray(message.imageData.data),
+                    message.imageData.width,
+                    message.imageData.height
+                );
+                const canvas = ui.canvas;
+                const context = canvas.getContext('2d');
+                canvas.width = message.imageData.width;
+                canvas.height = message.imageData.height;
+                context.putImageData(reconstructedImageData, 0, 0);
                 break;
             }
         }
@@ -234,12 +245,6 @@
         });
     });
 
-    // --- Video and Offscreen Canvas Setup for Predictions ---
-    const offscreenCanvas = new OffscreenCanvas(0, 0);
-    const offscreenCtx = offscreenCanvas.getContext('2d', { willReadFrequently: true });
-    let shouldSendFrames = false;
-    let previousImageDataHash = 0;
-
     // --- Update Rectangle Style and Save State ---
     function updateRectStyle(x, y, width, height) {
         ui.rect.style.left = `${x}px`;
@@ -248,9 +253,13 @@
         ui.rect.style.height = `${height}px`;
 
         mainRect = { x, y, width, height };
-        offscreenCanvas.width = width;
-        offscreenCanvas.height = height;
         localStorage.setItem('rectState', JSON.stringify(mainRect));
+        chrome.runtime.sendMessage({
+            target: 'offscreen',
+            type: 'rectUpdate',
+            rect: mainRect,
+            yoffset: window.scrollY
+        });
     }
 
     // --- Toggle Prediction Mode ---
@@ -264,67 +273,6 @@
 
         chrome.runtime.sendMessage({ target: 'worker', type: 'predict', action: currentAction });
         localStorage.setItem('isPredicting', currentAction === 'start');
-
-        if (currentAction === 'start') {
-            videoElement.srcObject = stream;
-            shouldSendFrames = true;
-            await videoElement.play();
-        } else {
-            shouldSendFrames = false;
-            videoElement.pause();
-            videoElement.srcObject = null;
-        }
     });
 
-    videoElement.addEventListener('play', () => {
-        console.log('Video playing');
-        requestAnimationFrame(drawToCanvas);
-    });
-
-    // --- Continuously Draw Video Frames to Canvas ---
-    function drawToCanvas() {
-        if (!shouldSendFrames || !mainRect) return;
-        offscreenCtx.drawImage(
-            videoElement,
-            mainRect.x,
-            mainRect.y + window.outerHeight - window.innerHeight,
-            mainRect.width,
-            mainRect.height,
-            0,
-            0,
-            offscreenCanvas.width,
-            offscreenCanvas.height
-        );
-
-        const imageData = offscreenCtx.getImageData(0, 0, offscreenCanvas.width, offscreenCanvas.height);
-        const currentHash = hashImageData(imageData.data);
-
-        if (currentHash !== previousImageDataHash) {
-            previousImageDataHash = currentHash;
-            ui.canvas.width = imageData.width;
-            ui.canvas.height = imageData.height;
-            const siteCtx = ui.canvas.getContext('2d');
-            siteCtx.putImageData(imageData, 0, 0);
-            chrome.runtime.sendMessage({
-                target: 'worker',
-                type: 'frameData',
-                imageData: {
-                    data: Array.from(imageData.data),
-                    width: imageData.width,
-                    height: imageData.height
-                }
-            });
-        }
-        requestAnimationFrame(drawToCanvas);
-    }
-
-    // --- Utility: Simple Hash Function for Image Data ---
-    function hashImageData(data) {
-        let hash = 0;
-        for (let i = 0; i < data.length; i++) {
-            hash = ((hash << 5) - hash) + data[i];
-            hash |= 0; // Convert to 32bit integer
-        }
-        return hash;
-    }
 })();

@@ -10,7 +10,7 @@ chrome.runtime.onInstalled.addListener(async () => {
 
 chrome.action.onClicked.addListener(async (tab) => {
   // Go full screen
-  await chrome.windows.update(chrome.windows.WINDOW_ID_CURRENT, { state: 'fullscreen' });
+  //await chrome.windows.update(chrome.windows.WINDOW_ID_CURRENT, { state: 'fullscreen' });
   modelDetails = (await chrome.storage.local.get('modelDetails'))?.modelDetails;
   const modelDetailsPromise = createDeferredPromise();
   if (!modelDetails) {
@@ -30,6 +30,7 @@ chrome.action.onClicked.addListener(async (tab) => {
     modelDetailsPromise.resolve();
   }
   await modelDetailsPromise.promise;
+  console.log(modelDetails);
   modelLoaded = await loadModel(modelDetails.modelType);
   console.log('Model loaded:', modelLoaded);
   const currentTab = tab.id;
@@ -55,6 +56,13 @@ chrome.action.onClicked.addListener(async (tab) => {
     aspectRatio,
     streamId,
   });
+
+  // Create offscreen document for ML inference
+  await chrome.offscreen.createDocument({
+    url: 'offscreen.html',
+    reasons: ['DISPLAY_MEDIA'],
+    justification: 'Machine learning inference',
+  });
 });
 
 chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
@@ -63,12 +71,22 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
   switch (message.type) {
     case 'predict':
       if (message.action === 'start') {
+        chrome.runtime.sendMessage({
+          type: 'start-frameCapture',
+          target: 'offscreen',
+          streamId: streamId,
+          targetTabId: message.targetTabId,
+        });
         chrome.windows.getCurrent((window) => {
           if (window.state === 'fullscreen')
             return;
-          chrome.windows.update(window.id, { state: 'fullscreen' });
+          //chrome.windows.update(window.id, { state: 'fullscreen' });
         });
       } else {
+        chrome.runtime.sendMessage({
+          type: 'stop-frameCapture',
+          target: 'offscreen',
+        });
         chrome.windows.getCurrent((window) => {
           chrome.windows.update(window.id, { state: 'normal' });
         });

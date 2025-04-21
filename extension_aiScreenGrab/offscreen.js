@@ -15,6 +15,8 @@ let targetTabId = null;
 let isPredicting = false;
 let modelLoaded = null;
 let modelDetails = null;
+let windowHeight = null;
+let windowWidth = null;
 
 chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
   console.log("[Offscreen] Message received:", message);
@@ -66,6 +68,8 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
               mandatory: {
                 chromeMediaSource: "tab",
                 chromeMediaSourceId: message.streamId,
+                minWidth: windowWidth,
+                minHeight: windowHeight,
               },
             },
           });
@@ -79,12 +83,19 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
       targetTabId = message.targetTabId;
       console.log("[Offscreen] Stream started for tab:", targetTabId);
       break;
+    case 'windowResize':
+      windowHeight = message.windowHeight;
+      windowWidth = message.windowWidth;
+      console.log("[Offscreen] Window resized:", windowHeight, windowWidth);
+      break;
   }
 });
 
 let frameInterval = null;
 
 video.addEventListener('play', () => {
+  video.width = video.videoWidth;
+  video.height = video.videoHeight;
   console.log('Video playing');
   if (!frameInterval) {
     frameInterval = setInterval(drawToCanvas, 1000 / 30);
@@ -126,6 +137,11 @@ async function drawToCanvas() {
     isPredicting = false;
     return;
   }
+
+  console.log("[Offscreen] Video dimensions: ", video.videoWidth, video.videoHeight);
+  console.log("[Offscreen] Video dimensions element: ", video.width, video.height);
+  console.log("[Offscreen] Canvas dimensions: ", rect.width, rect.height);
+  console.log("[Offscreen] Y-offset: ", yoffset);
 
   console.log("[Offscreen] Image data hash changed:", currentImageDataHash);
   previousImageDataHash = currentImageDataHash;

@@ -52,7 +52,7 @@ document.getElementById('modelDetails').addEventListener('submit', async (e) => 
 
   submitbutton.disabled = false;
   submitbutton.textContent = 'Save';
-  // window.close(); // optional
+  window.close(); // optional
 });
 
 (async () => {

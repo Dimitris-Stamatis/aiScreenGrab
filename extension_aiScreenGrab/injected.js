@@ -243,7 +243,11 @@
             target: 'offscreen',
             type: 'rectUpdate',
             rect: mainRect,
-            yoffset: window.scrollY
+            yoffset: window.scrollY,
+            windowSize: {
+                width: window.innerWidth,
+                height: window.innerHeight
+            }
         });
     }
 
@@ -260,4 +264,19 @@
         localStorage.setItem('isPredicting', currentAction === 'start');
     });
 
+
+    window.addEventListener('resize', () => {
+        sendWindowSizeToOffscren();
+    });
+
+    function sendWindowSizeToOffscren() {
+        // send window width and height to the offscreen document
+        chrome.runtime.sendMessage({
+            target: 'offscreen',
+            type: 'windowResize',
+            windowWidth: window.innerWidth,
+            windowHeight: window.innerHeight
+        });
+    }
+    sendWindowSizeToOffscren();
 })();

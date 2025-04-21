@@ -1668,6 +1668,41 @@ async function getAllFiles() {
     throw error;
   }
 }
+async function openKVStore() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(chrome.runtime.id + "_kv", 1);
+    request.onupgradeneeded = (event) => {
+      const db = event.target.result;
+      if (!db.objectStoreNames.contains("kv")) {
+        db.createObjectStore("kv", { keyPath: "key" });
+      }
+    };
+    request.onsuccess = (event) => resolve(event.target.result);
+    request.onerror = (event) => reject(event.target.error);
+  });
+}
+async function setItemInDB(key, value) {
+  const db = await openKVStore();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("kv", "readwrite");
+    const store = tx.objectStore("kv");
+    const request = store.put({ key, value });
+    request.onsuccess = () => resolve();
+    request.onerror = (e) => reject(e.target.error);
+  });
+}
+async function getItemFromDB(key) {
+  const db = await openKVStore();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("kv", "readonly");
+    const store = tx.objectStore("kv");
+    const request = store.get(key);
+    request.onsuccess = () => {
+      resolve(request.result?.value);
+    };
+    request.onerror = (e) => reject(e.target.error);
+  });
+}
 
 // utils/customIOHandler.mjs
 var tfIndexedDBLoader = {
@@ -1705,11 +1740,8 @@ var tfIndexedDBLoader = {
         const labelsText = await fileToString(labelsBlob);
         const labels2 = JSON.parse(labelsText);
         console.log("[Model Loader] Labels parsed:", labels2);
-        if (chrome?.storage?.local) {
-          chrome.storage.local.set({ labels: labels2 }, () => {
-            console.log("[Model Loader] Labels saved to Chrome storage.");
-          });
-        }
+        await setItemInDB("labels", labels2);
+        console.log("[Model Loader] Labels saved to IndexedDB.");
       } catch (error) {
         console.error("Error parsing labels JSON:", error);
         throw new Error("Invalid JSON in labels.json");
@@ -12726,215 +12758,6 @@ function withSaveHandler(saveHandler) {
 function withSaveHandlerSync(saveHandler) {
   return new PassthroughSaver(saveHandler);
 }
-
-// node_modules/@tensorflow/tfjs-core/dist/ops/browser.js
-var browser_exports = {};
-__export(browser_exports, {
-  draw: () => draw,
-  fromPixels: () => fromPixels,
-  fromPixelsAsync: () => fromPixelsAsync,
-  toPixels: () => toPixels
-});
-var fromPixels2DContext;
-var hasToPixelsWarned = false;
-function fromPixels_(pixels, numChannels = 3) {
-  if (numChannels > 4) {
-    throw new Error("Cannot construct Tensor with more than 4 channels from pixels.");
-  }
-  if (pixels == null) {
-    throw new Error("pixels passed to tf.browser.fromPixels() can not be null");
-  }
-  let isPixelData2 = false;
-  let isImageData = false;
-  let isVideo = false;
-  let isImage = false;
-  let isCanvasLike = false;
-  let isImageBitmap = false;
-  if (pixels.data instanceof Uint8Array) {
-    isPixelData2 = true;
-  } else if (typeof ImageData !== "undefined" && pixels instanceof ImageData) {
-    isImageData = true;
-  } else if (typeof HTMLVideoElement !== "undefined" && pixels instanceof HTMLVideoElement) {
-    isVideo = true;
-  } else if (typeof HTMLImageElement !== "undefined" && pixels instanceof HTMLImageElement) {
-    isImage = true;
-  } else if (pixels.getContext != null) {
-    isCanvasLike = true;
-  } else if (typeof ImageBitmap !== "undefined" && pixels instanceof ImageBitmap) {
-    isImageBitmap = true;
-  } else {
-    throw new Error(`pixels passed to tf.browser.fromPixels() must be either an HTMLVideoElement, HTMLImageElement, HTMLCanvasElement, ImageData in browser, or OffscreenCanvas, ImageData in webworker or {data: Uint32Array, width: number, height: number}, but was ${pixels.constructor.name}`);
-  }
-  const kernel = getKernel(FromPixels, ENGINE.backendName);
-  if (kernel != null) {
-    const inputs = { pixels };
-    const attrs = { numChannels };
-    return ENGINE.runKernel(FromPixels, inputs, attrs);
-  }
-  const [width, height] = isVideo ? [
-    pixels.videoWidth,
-    pixels.videoHeight
-  ] : [pixels.width, pixels.height];
-  let vals;
-  if (isCanvasLike) {
-    vals = // tslint:disable-next-line:no-any
-    pixels.getContext("2d").getImageData(0, 0, width, height).data;
-  } else if (isImageData || isPixelData2) {
-    vals = pixels.data;
-  } else if (isImage || isVideo || isImageBitmap) {
-    if (fromPixels2DContext == null) {
-      if (typeof document === "undefined") {
-        if (typeof OffscreenCanvas !== "undefined" && typeof OffscreenCanvasRenderingContext2D !== "undefined") {
-          fromPixels2DContext = new OffscreenCanvas(1, 1).getContext("2d");
-        } else {
-          throw new Error("Cannot parse input in current context. Reason: OffscreenCanvas Context2D rendering is not supported.");
-        }
-      } else {
-        fromPixels2DContext = document.createElement("canvas").getContext("2d", { willReadFrequently: true });
-      }
-    }
-    fromPixels2DContext.canvas.width = width;
-    fromPixels2DContext.canvas.height = height;
-    fromPixels2DContext.drawImage(pixels, 0, 0, width, height);
-    vals = fromPixels2DContext.getImageData(0, 0, width, height).data;
-  }
-  let values;
-  if (numChannels === 4) {
-    values = new Int32Array(vals);
-  } else {
-    const numPixels = width * height;
-    values = new Int32Array(numPixels * numChannels);
-    for (let i = 0; i < numPixels; i++) {
-      for (let channel = 0; channel < numChannels; ++channel) {
-        values[i * numChannels + channel] = vals[i * 4 + channel];
-      }
-    }
-  }
-  const outShape = [height, width, numChannels];
-  return tensor3d(values, outShape, "int32");
-}
-function isPixelData(pixels) {
-  return pixels != null && pixels.data instanceof Uint8Array;
-}
-function isImageBitmapFullySupported() {
-  return typeof window !== "undefined" && typeof ImageBitmap !== "undefined" && window.hasOwnProperty("createImageBitmap");
-}
-function isNonEmptyPixels(pixels) {
-  return pixels != null && pixels.width !== 0 && pixels.height !== 0;
-}
-function canWrapPixelsToImageBitmap(pixels) {
-  return isImageBitmapFullySupported() && !(pixels instanceof ImageBitmap) && isNonEmptyPixels(pixels) && !isPixelData(pixels);
-}
-async function fromPixelsAsync(pixels, numChannels = 3) {
-  let inputs = null;
-  if (env().getBool("WRAP_TO_IMAGEBITMAP") && canWrapPixelsToImageBitmap(pixels)) {
-    let imageBitmap;
-    try {
-      imageBitmap = await createImageBitmap(pixels, { premultiplyAlpha: "none" });
-    } catch (e) {
-      imageBitmap = null;
-    }
-    if (imageBitmap != null && imageBitmap.width === pixels.width && imageBitmap.height === pixels.height) {
-      inputs = imageBitmap;
-    } else {
-      inputs = pixels;
-    }
-  } else {
-    inputs = pixels;
-  }
-  return fromPixels_(inputs, numChannels);
-}
-function validateImgTensor(img) {
-  if (img.rank !== 2 && img.rank !== 3) {
-    throw new Error(`toPixels only supports rank 2 or 3 tensors, got rank ${img.rank}.`);
-  }
-  const depth = img.rank === 2 ? 1 : img.shape[2];
-  if (depth > 4 || depth === 2) {
-    throw new Error(`toPixels only supports depth of size 1, 3 or 4 but got ${depth}`);
-  }
-  if (img.dtype !== "float32" && img.dtype !== "int32") {
-    throw new Error(`Unsupported type for toPixels: ${img.dtype}. Please use float32 or int32 tensors.`);
-  }
-}
-function validateImageOptions(imageOptions) {
-  const alpha = (imageOptions === null || imageOptions === void 0 ? void 0 : imageOptions.alpha) || 1;
-  if (alpha > 1 || alpha < 0) {
-    throw new Error(`Alpha value ${alpha} is suppoed to be in range [0 - 1].`);
-  }
-}
-async function toPixels(img, canvas) {
-  let $img = convertToTensor(img, "img", "toPixels");
-  if (!(img instanceof Tensor)) {
-    const originalImgTensor = $img;
-    $img = cast(originalImgTensor, "int32");
-    originalImgTensor.dispose();
-  }
-  validateImgTensor($img);
-  const [height, width] = $img.shape.slice(0, 2);
-  const depth = $img.rank === 2 ? 1 : $img.shape[2];
-  const data = await $img.data();
-  const multiplier = $img.dtype === "float32" ? 255 : 1;
-  const bytes = new Uint8ClampedArray(width * height * 4);
-  for (let i = 0; i < height * width; ++i) {
-    const rgba = [0, 0, 0, 255];
-    for (let d = 0; d < depth; d++) {
-      const value = data[i * depth + d];
-      if ($img.dtype === "float32") {
-        if (value < 0 || value > 1) {
-          throw new Error(`Tensor values for a float32 Tensor must be in the range [0 - 1] but encountered ${value}.`);
-        }
-      } else if ($img.dtype === "int32") {
-        if (value < 0 || value > 255) {
-          throw new Error(`Tensor values for a int32 Tensor must be in the range [0 - 255] but encountered ${value}.`);
-        }
-      }
-      if (depth === 1) {
-        rgba[0] = value * multiplier;
-        rgba[1] = value * multiplier;
-        rgba[2] = value * multiplier;
-      } else {
-        rgba[d] = value * multiplier;
-      }
-    }
-    const j = i * 4;
-    bytes[j + 0] = Math.round(rgba[0]);
-    bytes[j + 1] = Math.round(rgba[1]);
-    bytes[j + 2] = Math.round(rgba[2]);
-    bytes[j + 3] = Math.round(rgba[3]);
-  }
-  if (canvas != null) {
-    if (!hasToPixelsWarned) {
-      const kernel = getKernel(Draw, ENGINE.backendName);
-      if (kernel != null) {
-        console.warn("tf.browser.toPixels is not efficient to draw tensor on canvas. Please try tf.browser.draw instead.");
-        hasToPixelsWarned = true;
-      }
-    }
-    canvas.width = width;
-    canvas.height = height;
-    const ctx = canvas.getContext("2d");
-    const imageData = new ImageData(bytes, width, height);
-    ctx.putImageData(imageData, 0, 0);
-  }
-  if ($img !== img) {
-    $img.dispose();
-  }
-  return bytes;
-}
-function draw(image2, canvas, options) {
-  let $img = convertToTensor(image2, "img", "draw");
-  if (!(image2 instanceof Tensor)) {
-    const originalImgTensor = $img;
-    $img = cast(originalImgTensor, "int32");
-    originalImgTensor.dispose();
-  }
-  validateImgTensor($img);
-  validateImageOptions(options === null || options === void 0 ? void 0 : options.imageOptions);
-  const inputs = { image: $img };
-  const attrs = { canvas, options };
-  ENGINE.runKernel(Draw, inputs, attrs);
-}
-var fromPixels = /* @__PURE__ */ op({ fromPixels_ });
 
 // node_modules/@tensorflow/tfjs-core/dist/ops/gather_nd_util.js
 function prepareAndValidate(tensor2, indices) {
@@ -46080,7 +45903,7 @@ var dilation2DBackpropInputConfig = {
 };
 
 // node_modules/@tensorflow/tfjs-backend-cpu/dist/kernels/Draw.js
-function draw2(args) {
+function draw(args) {
   const { inputs, backend: backend2, attrs } = args;
   const { image: image2 } = inputs;
   const { canvas, options } = attrs;
@@ -46135,7 +45958,7 @@ function draw2(args) {
 var drawConfig = {
   kernelName: Draw,
   backendName: "cpu",
-  kernelFunc: draw2
+  kernelFunc: draw
 };
 
 // node_modules/@tensorflow/tfjs-backend-cpu/dist/kernels/Sum.js
@@ -59920,11 +59743,11 @@ var FromPixelsPackedProgram = class {
 var fromPixelsConfig = {
   kernelName: FromPixels,
   backendName: "webgl",
-  kernelFunc: fromPixels2
+  kernelFunc: fromPixels
 };
-var fromPixels2DContext2;
+var fromPixels2DContext;
 var willReadFrequently = env().getBool("CANVAS2D_WILL_READ_FREQUENTLY_FOR_GPU");
-function fromPixels2(args) {
+function fromPixels(args) {
   const { inputs, backend: backend2, attrs } = args;
   let { pixels } = inputs;
   const { numChannels } = attrs;
@@ -59938,14 +59761,14 @@ function fromPixels2(args) {
   const outShape = [height, width, numChannels];
   if (isImage || isVideo) {
     const newWillReadFrequently = env().getBool("CANVAS2D_WILL_READ_FREQUENTLY_FOR_GPU");
-    if (fromPixels2DContext2 == null || newWillReadFrequently !== willReadFrequently) {
+    if (fromPixels2DContext == null || newWillReadFrequently !== willReadFrequently) {
       willReadFrequently = newWillReadFrequently;
-      fromPixels2DContext2 = document.createElement("canvas").getContext("2d", { willReadFrequently });
+      fromPixels2DContext = document.createElement("canvas").getContext("2d", { willReadFrequently });
     }
-    fromPixels2DContext2.canvas.width = width;
-    fromPixels2DContext2.canvas.height = height;
-    fromPixels2DContext2.drawImage(pixels, 0, 0, width, height);
-    pixels = fromPixels2DContext2.canvas;
+    fromPixels2DContext.canvas.width = width;
+    fromPixels2DContext.canvas.height = height;
+    fromPixels2DContext.drawImage(pixels, 0, 0, width, height);
+    pixels = fromPixels2DContext.canvas;
   }
   const tempPixelHandle = backend2.makeTensorInfo(texShape, "int32");
   backend2.texData.get(tempPixelHandle.dataId).usage = TextureUsage.PIXELS;
@@ -64480,8 +64303,7 @@ async function loadModel(modelType) {
   try {
     console.log(`[Model Loader] Loading ${modelType} model...`);
     const model2 = modelType === "graph" ? await loadGraphModel(tfIndexedDBLoader) : await loadLayersModel(tfIndexedDBLoader);
-    const labelResult = await chrome.storage.local.get("labels");
-    labels = labelResult?.labels || [];
+    labels = await getItemFromDB("labels") || [];
     if (!labels.length) {
       console.warn("[Model Loader] No labels found in storage.");
     } else {
@@ -64494,33 +64316,6 @@ async function loadModel(modelType) {
     throw error;
   }
 }
-async function predict(model2, imageData, inputShape, topK3) {
-  if (!model2) {
-    console.error("Model not loaded.");
-    return [];
-  }
-  if (!inputShape || !/^\d+x\d+$/.test(inputShape)) {
-    console.error("Invalid input shape format. Expected 'HxW' (e.g., '224x224').");
-    return [];
-  }
-  const [inH, inW] = inputShape.split("x").map(Number);
-  const logits = tidy(() => {
-    const tensor2 = browser_exports.fromPixels(imageData).resizeBilinear([inH, inW]).toFloat();
-    const normalized = tensor2.div(255);
-    const batched = normalized.reshape([1, inH, inW, 3]);
-    return model2.predict(batched);
-  });
-  const data = await logits.data();
-  const results = Array.from(data).map((probability, index) => ({
-    label: labels[index] || `Class ${index}`,
-    probability
-  }));
-  results.sort((a, b) => b.probability - a.probability);
-  if (topK3 && Number.isInteger(topK3) && topK3 > 0) {
-    return results.slice(0, topK3);
-  }
-  return results;
-}
 
 // service-worker.js
 var modelLoaded = null;
@@ -64530,32 +64325,34 @@ chrome.runtime.onInstalled.addListener(async () => {
   console.log("Extension installed.");
 });
 chrome.action.onClicked.addListener(async (tab) => {
-  modelDetails = (await chrome.storage.local.get("modelDetails"))?.modelDetails;
+  chrome.offscreen.createDocument({
+    url: "offscreen.html",
+    reasons: ["DISPLAY_MEDIA"],
+    justification: "Capture tab stream and run model inference"
+  });
+  modelDetails = await getItemFromDB("modelDetails");
   const modelDetailsPromise = createDeferredPromise();
   if (!modelDetails) {
     configureModel();
-    await chrome.storage.onChanged.addListener(async (changes, areaName) => {
-      if (areaName === "local" && changes.modelDetails) {
-        modelDetails = changes.modelDetails.newValue;
+    const listener = async (message, sender, sendResponse) => {
+      if (message.type === "modelDetailsUpdated") {
+        modelDetails = message.modelDetails;
+        await setItemInDB("modelDetails", modelDetails);
         modelLoaded = await loadModel(modelDetails.modelType);
-        chrome.runtime.sendMessage({
-          type: "loadModel",
-          target: "offscreen",
-          modelDetails,
-          modelLoaded
-        });
-        console.log("Model loaded:", modelLoaded);
         modelDetailsPromise.resolve();
-        chrome.storage.onChanged.removeListener();
+        chrome.runtime.onMessage.removeListener(listener);
       }
-    });
+    };
+    chrome.runtime.onMessage.addListener(listener);
   } else {
     modelDetailsPromise.resolve();
   }
   await modelDetailsPromise.promise;
-  console.log(modelDetails);
   modelLoaded = await loadModel(modelDetails.modelType);
-  console.log("Model loaded:", modelLoaded);
+  chrome.runtime.sendMessage({
+    type: "loadModel",
+    target: "offscreen"
+  });
   const currentTab = tab.id;
   await chrome.scripting.executeScript({
     target: { tabId: currentTab },
@@ -64575,15 +64372,16 @@ chrome.action.onClicked.addListener(async (tab) => {
   streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id });
   await chrome.storage.local.set({ streamId });
   chrome.storage.local.set({ streamId });
+  chrome.runtime.sendMessage({
+    type: "streamStart",
+    target: "offscreen",
+    streamId,
+    targetTabId: tab.id
+  });
   chrome.tabs.sendMessage(currentTab, {
     type: "startDrawing",
     aspectRatio,
     streamId
-  });
-  await chrome.offscreen.createDocument({
-    url: "offscreen.html",
-    reasons: ["DISPLAY_MEDIA"],
-    justification: "Machine learning inference"
   });
 });
 chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
@@ -64612,31 +64410,15 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
         });
       }
       break;
-    case "frameData":
-      console.log("Frame data received:", message.imageData);
-      console.log(typeof message.imageData);
-      if (message.imageData && message.imageData.data && message.imageData.width && message.imageData.height) {
-        const reconstructedImageData = new ImageData(
-          new Uint8ClampedArray(message.imageData.data),
-          // Convert back to Uint8ClampedArray
-          message.imageData.width,
-          message.imageData.height
-        );
-        let predictions = await predict(modelLoaded, reconstructedImageData, modelDetails.inputShape);
-        predictions = predictions.slice(0, 5);
-        console.log(predictions);
-        chrome.tabs.sendMessage(sender.tab.id, {
-          type: "predictions",
-          predictions,
-          imageData: message.imageData
-        });
-      } else {
-        console.error("Invalid image data received.");
-      }
-      break;
     case "configureModel":
       configureModel();
       break;
+    case "predictions":
+      chrome.tabs.sendMessage(message.targetTabId, {
+        type: "predictions",
+        predictions: message.predictions,
+        imageData: message.imageData
+      });
   }
   return true;
 });
@@ -69939,24 +69721,6 @@ function configureModel() {
   (**
    * @license
    * Copyright 2018 Google LLC. All Rights Reserved.
-   * Licensed under the Apache License, Version 2.0 (the "License");
-   * you may not use this file except in compliance with the License.
-   * You may obtain a copy of the License at
-   *
-   * http://www.apache.org/licenses/LICENSE-2.0
-   *
-   * Unless required by applicable law or agreed to in writing, software
-   * distributed under the License is distributed on an "AS IS" BASIS,
-   * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-   * See the License for the specific language governing permissions and
-   * limitations under the License.
-   * =============================================================================
-   *)
-
-@tensorflow/tfjs-core/dist/ops/browser.js:
-  (**
-   * @license
-   * Copyright 2019 Google LLC. All Rights Reserved.
    * Licensed under the Apache License, Version 2.0 (the "License");
    * you may not use this file except in compliance with the License.
    * You may obtain a copy of the License at

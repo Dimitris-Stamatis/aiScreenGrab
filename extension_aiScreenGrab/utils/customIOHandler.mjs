@@ -1,4 +1,4 @@
-import { getAllFiles, getFile } from "./indexedDB.mjs";
+import { getAllFiles, getFile, setItemInDB } from "./indexedDB.mjs";
 
 export const tfIndexedDBLoader = {
     async load() {
@@ -45,11 +45,11 @@ export const tfIndexedDBLoader = {
                 const labelsText = await fileToString(labelsBlob);
                 const labels = JSON.parse(labelsText);
                 console.log("[Model Loader] Labels parsed:", labels);
-                if (chrome?.storage?.local) {
-                    chrome.storage.local.set({ labels }, () => {
-                        console.log("[Model Loader] Labels saved to Chrome storage.");
-                    });
-                }
+
+                // Use IndexedDB key-value store instead of chrome.storage
+                await setItemInDB('labels', labels);
+                console.log("[Model Loader] Labels saved to IndexedDB.");
+
             } catch (error) {
                 console.error("Error parsing labels JSON:", error);
                 throw new Error("Invalid JSON in labels.json");

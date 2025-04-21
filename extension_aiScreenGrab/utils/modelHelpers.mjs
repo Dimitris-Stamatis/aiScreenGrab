@@ -1,4 +1,5 @@
 import { tfIndexedDBLoader } from "./customIOHandler.mjs";
+import { getItemFromDB } from "./indexedDB.mjs";
 import * as tf from "@tensorflow/tfjs"
 
 let labels = [];
@@ -14,8 +15,7 @@ export async function loadModel(modelType) {
             ? await tf.loadGraphModel(tfIndexedDBLoader)
             : await tf.loadLayersModel(tfIndexedDBLoader);
 
-        const labelResult = await chrome.storage.local.get('labels');
-        labels = labelResult?.labels || [];
+        labels = await getItemFromDB('labels') || [];
         if (!labels.length) {
             console.warn("[Model Loader] No labels found in storage.");
         } else {

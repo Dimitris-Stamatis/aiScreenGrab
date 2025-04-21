@@ -35,7 +35,6 @@
     let aspectRatioLocal = localStorage.getItem('aspectRatio') || null;
     const rectState = JSON.parse(localStorage.getItem('rectState')) || null;
     const isPredicting = localStorage.getItem('isPredicting') === 'true';
-    let stream = null;
     let mainRect = null;
     let rectX, rectY, rectWidth, rectHeight;
 
@@ -85,24 +84,10 @@
 
     // --- Listen for Messages from Background/Worker ---
     chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
+        console.log('Message received:', message);
         switch (message.type) {
             case 'startDrawing': {
                 console.log('Received startDrawing message:', message);
-                if (!stream) {
-                    try {
-                        stream = await navigator.mediaDevices.getUserMedia({
-                            audio: false,
-                            video: {
-                                mandatory: {
-                                    chromeMediaSource: "tab",
-                                    chromeMediaSourceId: message.streamId,
-                                },
-                            },
-                        });
-                    } catch (error) {
-                        console.error('Error accessing media devices:', error);
-                    }
-                }
                 startDrawing(message.aspectRatio);
                 break;
             }

@@ -85,3 +85,45 @@ export async function getAllFiles() {
     throw error;
   }
 }
+
+async function openKVStore() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(chrome.runtime.id + "_kv", 1);
+
+    request.onupgradeneeded = (event) => {
+      const db = event.target.result;
+      if (!db.objectStoreNames.contains('kv')) {
+        db.createObjectStore('kv', { keyPath: 'key' });
+      }
+    };
+
+    request.onsuccess = (event) => resolve(event.target.result);
+    request.onerror = (event) => reject(event.target.error);
+  });
+}
+
+export async function setItemInDB(key, value) {
+  const db = await openKVStore();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('kv', 'readwrite');
+    const store = tx.objectStore('kv');
+    const request = store.put({ key, value });
+
+    request.onsuccess = () => resolve();
+    request.onerror = (e) => reject(e.target.error);
+  });
+}
+
+export async function getItemFromDB(key) {
+  const db = await openKVStore();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('kv', 'readonly');
+    const store = tx.objectStore('kv');
+    const request = store.get(key);
+
+    request.onsuccess = () => {
+      resolve(request.result?.value);
+    };
+    request.onerror = (e) => reject(e.target.error);
+  });
+}

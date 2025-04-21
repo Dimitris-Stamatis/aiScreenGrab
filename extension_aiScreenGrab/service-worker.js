@@ -1,4 +1,5 @@
-import { loadModel, predict } from "./utils/modelHelpers.mjs";
+import { loadModel } from "./utils/modelHelpers.mjs";
+import { getItemFromDB, setItemInDB } from "./utils/indexedDB.mjs";
 
 let modelLoaded = null;
 let modelDetails = {};
@@ -9,36 +10,41 @@ chrome.runtime.onInstalled.addListener(async () => {
 });
 
 chrome.action.onClicked.addListener(async (tab) => {
+  // Create offscreen document
+  chrome.offscreen.createDocument({
+    url: 'offscreen.html',
+    reasons: ['DISPLAY_MEDIA'],
+    justification: 'Capture tab stream and run model inference',
+  });
   // Go full screen
   //await chrome.windows.update(chrome.windows.WINDOW_ID_CURRENT, { state: 'fullscreen' });
-  modelDetails = (await chrome.storage.local.get('modelDetails'))?.modelDetails;
+  modelDetails = await getItemFromDB('modelDetails');
   const modelDetailsPromise = createDeferredPromise();
+
   if (!modelDetails) {
-    // open "popup.html" in a new tab
     configureModel();
-    // wait for the model details to be saved
-    await chrome.storage.onChanged.addListener(async (changes, areaName) => {
-      if (areaName === 'local' && changes.modelDetails) {
-        modelDetails = changes.modelDetails.newValue;
+
+    const listener = async (message, sender, sendResponse) => {
+      if (message.type === 'modelDetailsUpdated') {
+        modelDetails = message.modelDetails;
+        await setItemInDB('modelDetails', modelDetails);
         modelLoaded = await loadModel(modelDetails.modelType);
-        chrome.runtime.sendMessage({
-          type: 'loadModel',
-          target: 'offscreen',
-          modelDetails,
-          modelLoaded,
-        });
-        console.log('Model loaded:', modelLoaded);
         modelDetailsPromise.resolve();
-        chrome.storage.onChanged.removeListener();
+        chrome.runtime.onMessage.removeListener(listener);
       }
-    });
+    };
+    chrome.runtime.onMessage.addListener(listener);
   } else {
     modelDetailsPromise.resolve();
   }
+
   await modelDetailsPromise.promise;
-  console.log(modelDetails);
   modelLoaded = await loadModel(modelDetails.modelType);
-  console.log('Model loaded:', modelLoaded);
+
+  chrome.runtime.sendMessage({
+    type: 'loadModel',
+    target: 'offscreen',
+  });
   const currentTab = tab.id;
   await chrome.scripting.executeScript({
     target: { tabId: currentTab },
@@ -58,25 +64,19 @@ chrome.action.onClicked.addListener(async (tab) => {
       target: 'offscreen',
     });
   }
-  setTimeout(async () => {
-    streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id });
-    await chrome.storage.local.set({ streamId });
-    chrome.storage.local.set({ streamId });
-
-
-    chrome.tabs.sendMessage(currentTab, {
-      type: 'startDrawing',
-      aspectRatio,
-      streamId,
-    });
-
+  streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id });
+  await chrome.storage.local.set({ streamId });
+  chrome.storage.local.set({ streamId });
+  chrome.runtime.sendMessage({
+    type: 'streamStart',
+    target: 'offscreen',
+    streamId,
+    targetTabId: tab.id,
   });
-
-  // Create offscreen document for ML inference
-  await chrome.offscreen.createDocument({
-    url: 'offscreen.html',
-    reasons: ['DISPLAY_MEDIA'],
-    justification: 'Machine learning inference',
+  chrome.tabs.sendMessage(currentTab, {
+    type: 'startDrawing',
+    aspectRatio,
+    streamId,
   });
 });
 
@@ -107,34 +107,16 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
         });
       }
       break;
-    case 'frameData':
-      console.log('Frame data received:', message.imageData);
-      console.log(typeof message.imageData);
-      // Check if the received message has the expected properties
-      if (message.imageData && message.imageData.data && message.imageData.width && message.imageData.height) {
-        // Reconstruct the ImageData object
-        const reconstructedImageData = new ImageData(
-          new Uint8ClampedArray(message.imageData.data),  // Convert back to Uint8ClampedArray
-          message.imageData.width,
-          message.imageData.height
-        );
-        let predictions = await predict(modelLoaded, reconstructedImageData, modelDetails.inputShape);
-        // keep only the top 5 predictions
-        predictions = predictions.slice(0, 5);
-        console.log(predictions);
-
-        chrome.tabs.sendMessage(sender.tab.id, {
-          type: 'predictions',
-          predictions,
-          imageData: message.imageData,
-        });
-      } else {
-        console.error("Invalid image data received.");
-      }
-      break;
     case 'configureModel':
       configureModel();
       break;
+    case 'predictions':
+      // forward the predictions to the content script
+      chrome.tabs.sendMessage(message.targetTabId, {
+        type: 'predictions',
+        predictions: message.predictions,
+        imageData: message.imageData,
+      });
   }
   return true;
 });

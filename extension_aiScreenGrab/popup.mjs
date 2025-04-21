@@ -1,13 +1,16 @@
-import { saveFile } from "./utils/indexedDB.mjs";
+import { saveFile, setItemInDB, getItemFromDB } from "./utils/indexedDB.mjs";
 
 const submitbutton = document.querySelector('button[type="submit"]');
+
 document.getElementById('modelDetails').addEventListener('submit', async (e) => {
   e.preventDefault();
   submitbutton.disabled = true;
   submitbutton.textContent = 'Uploading...';
+
   const formdata = new FormData(e.target);
   const selectedfiles = document.getElementById('modelFiles').files;
-  let modelFiles, modelFileNames = [];
+
+  let modelFiles = [], modelFileNames = [];
   if (selectedfiles) {
     modelFiles = Array.from(selectedfiles);
   }
@@ -21,16 +24,15 @@ document.getElementById('modelDetails').addEventListener('submit', async (e) => 
       console.log("Saved file:", file.name);
       return file.name;
     });
-  
-    // Wait for all files to be saved and collect their names
+
     modelFileNames = await Promise.all(savePromises);
   } catch (error) {
     console.error("One or more files failed to save:", error);
     alert('Failed to save file: ' + error.message);
     submitbutton.disabled = false;
     submitbutton.textContent = 'Save';
-    return; // Stop further execution if saving fails
-  }  
+    return;
+  }
 
   const modelDetails = {
     inputShape: formdata.get('inputShape').toLowerCase(),
@@ -40,23 +42,31 @@ document.getElementById('modelDetails').addEventListener('submit', async (e) => 
     modelFiles: modelFileNames,
   };
 
-  await chrome.storage.local.set({ modelDetails });
+  await setItemInDB('modelDetails', modelDetails);
+
+  // Notify the service worker
+  chrome.runtime.sendMessage({
+    type: 'modelDetailsUpdated',
+    modelDetails,
+  });
+
   submitbutton.disabled = false;
   submitbutton.textContent = 'Save';
-  // close tab after sending success message to service worker
-  // window.close();
+  // window.close(); // optional
 });
 
-chrome.storage.local.get('modelDetails', ({ modelDetails }) => {
-  if (!modelDetails)
-    return;
+(async () => {
+  const modelDetails = await getItemFromDB('modelDetails');
+  if (!modelDetails) return;
+
   document.getElementById('inputShape').value = modelDetails.inputShape;
   document.getElementById('outputShape').value = modelDetails.outputShape;
   document.getElementById('modelType').value = modelDetails.modelType;
   document.getElementById('returnType').value = modelDetails.returnType;
+
   modelDetails.modelFiles.forEach(file => {
     const fileElement = document.createElement('li');
     fileElement.textContent = file;
     document.getElementById('modelFilesList').appendChild(fileElement);
   });
-});
+})();

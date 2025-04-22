@@ -244,9 +244,9 @@
             type: 'rectUpdate',
             rect: mainRect,
             yoffset: window.scrollY,
-            windowSize: {
-                width: window.innerWidth,
-                height: window.innerHeight
+            layoutSize: {
+                width: document.documentElement.clientWidth,
+                height: document.documentElement.clientHeight
             }
         });
     }
@@ -274,8 +274,9 @@
         chrome.runtime.sendMessage({
             target: 'offscreen',
             type: 'windowResize',
-            windowWidth: window.innerWidth,
-            windowHeight: window.innerHeight
+            windowWidth: document.documentElement.clientWidth,
+            windowHeight: document.documentElement.clientHeight,
+            devicePixelRatio: window.devicePixelRatio
         });
     }
     sendWindowSizeToOffscren();

@@ -64568,6 +64568,8 @@ var modelLoaded = null;
 var modelDetails = null;
 var windowHeight = null;
 var windowWidth = null;
+var layoutWidth = null;
+var layoutHeight = null;
 chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
   console.log("[Offscreen] Message received:", message);
   if (message.target !== "offscreen") return;
@@ -64600,8 +64602,8 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
     case "rectUpdate":
       rect = message.rect;
       yoffset = message.yoffset;
-      offscreenCanvas.width = rect.width;
-      offscreenCanvas.height = rect.height;
+      layoutWidth = message.layoutSize?.width;
+      layoutHeight = message.layoutSize?.height;
       break;
     case "streamStart":
       if (!stream) {
@@ -64613,10 +64615,16 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
                 chromeMediaSource: "tab",
                 chromeMediaSourceId: message.streamId,
                 minWidth: windowWidth,
-                minHeight: windowHeight
+                minHeight: windowHeight,
+                height: windowHeight,
+                width: windowWidth,
+                maxWidth: windowWidth,
+                maxHeight: windowHeight
               }
             }
           });
+          console.log("[Offscreen] minWidth:", windowWidth);
+          console.log("[Offscreen] minHeight:", windowHeight);
         } catch (error) {
           console.error("Error accessing media devices:", error);
           return;
@@ -64636,8 +64644,8 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
 });
 var frameInterval = null;
 video.addEventListener("play", () => {
-  video.width = video.videoWidth;
-  video.height = video.videoHeight;
+  video.width = windowWidth;
+  video.height = windowHeight;
   console.log("Video playing");
   if (!frameInterval) {
     frameInterval = setInterval(drawToCanvas, 1e3 / 30);
@@ -64651,36 +64659,37 @@ video.addEventListener("pause", () => {
 });
 var previousImageDataHash = null;
 async function drawToCanvas() {
-  console.log("[Offscreen] Drawing to canvas");
-  if (!sendframesstatus || isPredicting || !modelLoaded) return;
+  if (!sendframesstatus || isPredicting || !modelLoaded || !layoutWidth || !layoutHeight) return;
   isPredicting = true;
-  ctx.clearRect(0, 0, rect.width, rect.height);
-  ctx.drawImage(
-    video,
-    rect.x,
-    rect.y + yoffset,
-    rect.width,
-    rect.height,
-    0,
-    0,
-    rect.width,
-    rect.height
-  );
-  const imageData = ctx.getImageData(0, 0, rect.width, rect.height);
+  const xRatio = rect.x / layoutWidth;
+  const yRatio = (rect.y - yoffset) / layoutHeight;
+  const widthRatio = rect.width / layoutWidth;
+  const heightRatio = rect.height / layoutHeight;
+  const sx = xRatio * video.videoWidth;
+  const sy = yRatio * video.videoHeight;
+  const sw = widthRatio * video.videoWidth;
+  const sh = heightRatio * video.videoHeight;
+  if (sw <= 0 || sh <= 0) {
+    console.warn("[Offscreen] Skipping due to zero size", sw, sh);
+    isPredicting = false;
+    return;
+  }
+  offscreenCanvas.width = sw;
+  offscreenCanvas.height = sh;
+  ctx.clearRect(0, 0, sw, sh);
+  ctx.drawImage(video, sx, sy, sw, sh, 0, 0, sw, sh);
+  const imageData = ctx.getImageData(0, 0, sw, sh);
+  console.log("[Offscreen] Layout size:", layoutWidth, layoutHeight);
+  console.log("[Offscreen] Video size:", video.videoWidth, video.videoHeight);
+  console.log("[Offscreen] Cropping video at:", sx, sy, sw, sh);
   const currentImageDataHash = hashImageData(imageData.data);
   if (currentImageDataHash === previousImageDataHash) {
     isPredicting = false;
     return;
   }
-  console.log("[Offscreen] Video dimensions: ", video.videoWidth, video.videoHeight);
-  console.log("[Offscreen] Video dimensions element: ", video.width, video.height);
-  console.log("[Offscreen] Canvas dimensions: ", rect.width, rect.height);
-  console.log("[Offscreen] Y-offset: ", yoffset);
-  console.log("[Offscreen] Image data hash changed:", currentImageDataHash);
   previousImageDataHash = currentImageDataHash;
   try {
     const predictions = await predict(modelLoaded, imageData, modelDetails.inputShape, 5);
-    console.log("[Offscreen] Predictions:", predictions);
     chrome.runtime.sendMessage({
       type: "predictions",
       predictions,

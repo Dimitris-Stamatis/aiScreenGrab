@@ -11,7 +11,10 @@
         <div class="__extension_aiScreen-overlayElements">
           <div class="__extension_aiScreen-overlay"></div>
           <div class="__extension_aiScreen-rect" data-dragable="true"></div>
+          <div class="__extension_aiScreen-canvasContainer" data-dragable="true">
+          <div class="__extension_aiScreen-fps"></div>
           <canvas class="__extension_aiScreen-canvas"></canvas>
+          </div>
         </div>
       </div>
     `;
@@ -49,7 +52,8 @@
         predictButton: container.querySelector('.__extension_aiScreen-predict'),
         configureModel: container.querySelector('.__extension_aiScreen-configureModel'),
         results: container.querySelector('.__extension_aiScreen-results'),
-        draggers: container.querySelectorAll('.__extension_aiScreen-dragIcon')
+        draggers: container.querySelectorAll('.__extension_aiScreen-dragIcon'),
+        fps: container.querySelector('.__extension_aiScreen-fps'),
     };
     const videoElement = document.createElement('video');
 
@@ -107,6 +111,7 @@
                 canvas.width = message.imageData.width;
                 canvas.height = message.imageData.height;
                 context.putImageData(reconstructedImageData, 0, 0);
+                ui.fps.textContent = `FPS: ${message.fps}`;
                 break;
             }
         }

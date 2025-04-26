@@ -19,6 +19,8 @@ let windowHeight = null;
 let windowWidth = null;
 let layoutWidth = null;
 let layoutHeight = null;
+let lastFrameTime = performance.now();
+let fps = 0;
 
 chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
   console.log("[Offscreen] Message received:", message);
@@ -122,6 +124,9 @@ let previousImageDataHash = null;
 async function drawToCanvas() {
   if (!sendframesstatus || isPredicting || !modelLoaded || !layoutWidth || !layoutHeight) return;
 
+  const now  = performance.now();
+  fps = Math.round(1000 / (now - lastFrameTime));
+  lastFrameTime = now;
   isPredicting = true;
 
   // Scale DOM rect into normalized % coordinates
@@ -172,7 +177,8 @@ async function drawToCanvas() {
         height: imageData.height,
       },
       target: 'worker',
-      targetTabId
+      targetTabId,
+      fps,
     });
   } catch (error) {
     console.error("[Offscreen] Prediction error:", error);

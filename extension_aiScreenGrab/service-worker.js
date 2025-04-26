@@ -116,6 +116,7 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
         type: 'predictions',
         predictions: message.predictions,
         imageData: message.imageData,
+        fps: message.fps,
       });
   }
   return true;

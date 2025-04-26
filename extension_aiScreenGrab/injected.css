@@ -61,13 +61,22 @@
     display: block;
 }
 
-.__extension_aiScreen-canvas {
+.__extension_aiScreen-canvasContainer {
     /* display: none;*/
     position: fixed;
     top: 0;
     left: 0;
     border: 1px solid black;
     z-index: 100000;
+}
+
+.__extension_aiScreen-fps {
+    position: absolute;
+    top: 0;
+    left: 0;
+    color: white;
+    background: rgba(0, 0, 0, .5);
+    padding: 1px;
 }
 
 .__extension_aiScreen-results {

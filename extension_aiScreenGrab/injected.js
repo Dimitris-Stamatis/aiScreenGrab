@@ -1,288 +1,251 @@
 (async () => {
-    // --- Inject the Extension UI ---
-    const extensionHTML = `
-      <div id="__extension_aiScreen">
-        <div class="__extension_aiScreen-modelUI" data-dragable="true">
-          <button class="__extension_aiScreen-predict" data-for="start">Start predictions</button>
-          <button class="__extension_aiScreen-drawArea">Draw Area</button>
-          <button class="__extension_aiScreen-configureModel">Configure Model</button>
-          <div class="__extension_aiScreen-results"></div>
-        </div>
-        <div class="__extension_aiScreen-overlayElements">
-          <div class="__extension_aiScreen-overlay"></div>
-          <div class="__extension_aiScreen-rect" data-dragable="true"></div>
-          <div class="__extension_aiScreen-canvasContainer" data-dragable="true">
-          <div class="__extension_aiScreen-fps"></div>
-          <canvas class="__extension_aiScreen-canvas"></canvas>
-          </div>
-        </div>
-      </div>
-    `;
-    document.body.insertAdjacentHTML('beforeend', extensionHTML);
-
-    // --- Create and Append Drag Icon ---
-    const dragIconURL = chrome.runtime.getURL('icons/drag.svg');
-    const createDragIcon = () => {
-        const icon = document.createElement('img');
-        icon.src = dragIconURL;
-        icon.alt = 'Drag';
-        icon.classList.add('__extension_aiScreen-dragIcon');
-        return icon;
+    // --- Global State ---
+    const AppState = {
+      aspectRatio: localStorage.getItem('aspectRatio') || '1x1',
+      rect: JSON.parse(localStorage.getItem('rectState')) || null,
+      isPredicting: localStorage.getItem('isPredicting') === 'true',
+      mainRect: null,
+      resizeTimeout: null,
     };
-
-    document.querySelectorAll('#__extension_aiScreen [data-dragable="true"]').forEach((element) => {
-        element.appendChild(createDragIcon());
-    });
-
-    // --- Initialize State from localStorage ---
-    let aspectRatioLocal = localStorage.getItem('aspectRatio') || null;
-    const rectState = JSON.parse(localStorage.getItem('rectState')) || null;
-    const isPredicting = localStorage.getItem('isPredicting') === 'true';
-    let mainRect = null;
-    let rectX, rectY, rectWidth, rectHeight;
-
-    // --- Cache UI Elements ---
-    const container = document.getElementById('__extension_aiScreen');
-    const ui = {
-        redrawButton: container.querySelector('.__extension_aiScreen-drawArea'),
-        overlay: container.querySelector('.__extension_aiScreen-overlay'),
-        rect: container.querySelector('.__extension_aiScreen-rect'),
-        canvas: container.querySelector('.__extension_aiScreen-canvas'),
-        modelUI: container.querySelector('.__extension_aiScreen-modelUI'),
-        predictButton: container.querySelector('.__extension_aiScreen-predict'),
-        configureModel: container.querySelector('.__extension_aiScreen-configureModel'),
-        results: container.querySelector('.__extension_aiScreen-results'),
-        draggers: container.querySelectorAll('.__extension_aiScreen-dragIcon'),
-        fps: container.querySelector('.__extension_aiScreen-fps'),
-    };
-    const videoElement = document.createElement('video');
-
-    // --- Restore Saved Rectangle (if any) ---
-    if (rectState) {
-        ({ x: rectX, y: rectY, width: rectWidth, height: rectHeight } = rectState);
-        Object.assign(ui.rect.style, {
-            left: `${rectX}px`,
-            top: `${rectY}px`,
-            width: `${rectWidth}px`,
-            height: `${rectHeight}px`
-        });
-        ui.rect.classList.add('active');
-        mainRect = { x: rectX, y: rectY, width: rectWidth, height: rectHeight };
+  
+    // --- UI Elements ---
+    const UI = _initUI();
+    _restoreRect();
+    _updatePredictButton(AppState.isPredicting);
+  
+    // --- Event Listeners ---
+    _setupUIEventListeners();
+    _setupChromeMessageListener();
+    _setupWindowResizeListener();
+  
+    // --- Helpers ---
+    function _initUI() {
+      document.body.insertAdjacentHTML('beforeend', _getHTML());
+      const dragIconURL = chrome.runtime.getURL('icons/drag.svg');
+      document.querySelectorAll('[data-dragable="true"]').forEach(el => {
+        el.appendChild(_createDragIcon(dragIconURL));
+      });
+      return {
+        container: document.getElementById('__extension_aiScreen'),
+        redrawButton: document.querySelector('.__extension_aiScreen-drawArea'),
+        overlay: document.querySelector('.__extension_aiScreen-overlay'),
+        rect: document.querySelector('.__extension_aiScreen-rect'),
+        canvas: document.querySelector('.__extension_aiScreen-canvas'),
+        modelUI: document.querySelector('.__extension_aiScreen-modelUI'),
+        predictButton: document.querySelector('.__extension_aiScreen-predict'),
+        configureModel: document.querySelector('.__extension_aiScreen-configureModel'),
+        results: document.querySelector('.__extension_aiScreen-results'),
+        draggers: document.querySelectorAll('.__extension_aiScreen-dragIcon'),
+        fps: document.querySelector('.__extension_aiScreen-fps'),
+      };
     }
-
-    // --- Update Prediction Button if Already Active ---
-    if (isPredicting) {
-        ui.predictButton.dataset.for = 'stop';
-        ui.predictButton.textContent = 'Stop predictions';
+  
+    function _restoreRect() {
+      if (!AppState.rect) return;
+      Object.assign(UI.rect.style, {
+        left: `${AppState.rect.x}px`,
+        top: `${AppState.rect.y}px`,
+        width: `${AppState.rect.width}px`,
+        height: `${AppState.rect.height}px`,
+      });
+      UI.rect.classList.add('active');
+      AppState.mainRect = { ...AppState.rect };
     }
-
-    // --- UI Button Event Listeners ---
-    ui.redrawButton.addEventListener('click', () => {
-        startDrawing(aspectRatioLocal);
-        ui.redrawButton.classList.remove('active');
-    });
-
-    ui.configureModel.addEventListener('click', () => {
-        chrome.runtime.sendMessage({ target: 'worker', type: 'configureModel' });
-    });
-
-    // --- Listen for Messages from Background/Worker ---
-    chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
+  
+    function _updatePredictButton(isPredicting) {
+      if (isPredicting) {
+        UI.predictButton.dataset.for = 'stop';
+        UI.predictButton.textContent = 'Stop predictions';
+      }
+    }
+  
+    function _setupUIEventListeners() {
+      UI.redrawButton.addEventListener('click', () => _startDrawing(AppState.aspectRatio));
+      UI.configureModel.addEventListener('click', () => chrome.runtime.sendMessage({ target: 'worker', type: 'configureModel' }));
+      UI.predictButton.addEventListener('click', _togglePredictMode);
+      UI.draggers.forEach(dragger => dragger.addEventListener('mousedown', _onDragStart));
+    }
+  
+    function _setupChromeMessageListener() {
+      chrome.runtime.onMessage.addListener(async (message) => {
         console.log('Message received:', message);
-        switch (message.type) {
-            case 'startDrawing': {
-                console.log('Received startDrawing message:', message);
-                startDrawing(message.aspectRatio);
-                break;
-            }
-            case 'predictions': {
-                const predictionsHTML = message.predictions
-                    .map(({ label, probability }) => `<div>${label}: ${probability.toFixed(2)}</div>`)
-                    .join('');
-                ui.results.innerHTML = predictionsHTML;
-                // update canvas with imagedata
-                const reconstructedImageData = new ImageData(
-                    new Uint8ClampedArray(message.imageData.data),
-                    message.imageData.width,
-                    message.imageData.height
-                );
-                const canvas = ui.canvas;
-                const context = canvas.getContext('2d');
-                canvas.width = message.imageData.width;
-                canvas.height = message.imageData.height;
-                context.putImageData(reconstructedImageData, 0, 0);
-                ui.fps.textContent = `FPS: ${message.fps}`;
-                break;
-            }
+        if (message.type === 'startDrawing') {
+          _startDrawing(message.aspectRatio);
+        } else if (message.type === 'predictions') {
+          _handlePredictions(message);
         }
         return true;
-    });
-
-    // --- Drawing Functionality ---
-    function startDrawing(aspectRatio = null) {
-        if (aspectRatio) {
-            aspectRatioLocal = aspectRatio;
-            localStorage.setItem('aspectRatio', aspectRatio);
+      });
+    }
+  
+    function _setupWindowResizeListener() {
+      window.addEventListener('resize', () => {
+        clearTimeout(AppState.resizeTimeout);
+        AppState.resizeTimeout = setTimeout(_sendWindowSizeToOffscreen, 200);
+      });
+      _sendWindowSizeToOffscreen(); // Initial send
+    }
+  
+    // --- UI Logic ---
+    function _startDrawing(aspectRatio = null) {
+      if (aspectRatio) {
+        AppState.aspectRatio = aspectRatio;
+        localStorage.setItem('aspectRatio', aspectRatio);
+      }
+      UI.rect.classList.remove('active');
+      UI.overlay.classList.add('active');
+  
+      let startX = 0, startY = 0, drawing = false;
+      const originalOverflow = document.body.style.overflow;
+  
+      UI.overlay.addEventListener('mousedown', function handleMouseDown(e) {
+        startX = e.clientX;
+        startY = e.clientY;
+        drawing = true;
+        Object.assign(UI.rect.style, { left: `${startX}px`, top: `${startY}px`, width: '0px', height: '0px' });
+        UI.rect.classList.add('active');
+        document.body.style.overflow = 'hidden';
+        UI.overlay.removeEventListener('mousedown', handleMouseDown);
+      });
+  
+      document.addEventListener('mousemove', function handleMouseMove(e) {
+        if (!drawing) return;
+        let currentX = e.clientX, currentY = e.clientY;
+        let width = Math.abs(currentX - startX);
+        let height = Math.abs(currentY - startY);
+  
+        if (AppState.aspectRatio) {
+          const [w, h] = AppState.aspectRatio.split('x').map(Number);
+          const ratio = h / w;
+          height = width * ratio;
         }
-        if (!aspectRatioLocal) {
-            aspectRatioLocal = '1x1';
+  
+        const rectX = Math.min(startX, startX + width);
+        const rectY = Math.min(startY, startY + height);
+  
+        _updateRect(rectX, rectY, width, height);
+      });
+  
+      document.addEventListener('mouseup', function handleMouseUp() {
+        drawing = false;
+        UI.overlay.classList.remove('active');
+        UI.redrawButton.classList.add('active');
+        UI.modelUI.classList.add('active');
+        document.body.style.overflow = originalOverflow;
+  
+        AppState.mainRect = { x: parseInt(UI.rect.style.left), y: parseInt(UI.rect.style.top), width: parseInt(UI.rect.style.width), height: parseInt(UI.rect.style.height) };
+        _saveRectState();
+        document.removeEventListener('mousemove', handleMouseMove);
+        document.removeEventListener('mouseup', handleMouseUp);
+      });
+    }
+  
+    function _onDragStart(e) {
+      e.preventDefault();
+      const parent = e.target.parentElement;
+      const offsetX = e.clientX - parent.getBoundingClientRect().left;
+      const offsetY = e.clientY - parent.getBoundingClientRect().top;
+      const maxX = window.innerWidth - parent.offsetWidth;
+      const maxY = window.innerHeight - parent.offsetHeight;
+  
+      function handleDrag(event) {
+        const x = Math.min(Math.max(0, event.clientX - offsetX), maxX);
+        const y = Math.min(Math.max(0, event.clientY - offsetY), maxY);
+        parent.style.left = `${x}px`;
+        parent.style.top = `${y}px`;
+  
+        if (parent.classList.contains('__extension_aiScreen-rect')) {
+          _updateRect(x, y, AppState.mainRect.width, AppState.mainRect.height);
         }
-
-        ui.rect.classList.remove('active');
-        ui.overlay.classList.add('active');
-
-        let startX = 0;
-        let startY = 0;
-        let drawing = false;
-        const originalBodyOverflow = document.body.style.overflow;
-
-        const handleMouseDown = (e) => {
-            startX = e.clientX;
-            startY = e.clientY + window.scrollY;
-            drawing = true;
-
-            Object.assign(ui.rect.style, {
-                left: `${startX}px`,
-                top: `${startY}px`,
-                width: '0px',
-                height: '0px'
-            });
-            ui.rect.classList.add('active');
-            document.body.style.overflow = 'hidden';
-            ui.overlay.removeEventListener('mousedown', handleMouseDown);
-        };
-
-        const handleMouseMove = (e) => {
-            if (!drawing) return;
-            const currentX = e.clientX;
-            const currentY = e.clientY + window.scrollY;
-
-            rectWidth = Math.abs(currentX - startX);
-            rectHeight = Math.abs(currentY - startY);
-
-            if (aspectRatioLocal) {
-                const [w, h] = aspectRatioLocal.split('x').map(Number);
-                const ratio = h / w;
-                let adjustedHeight = rectWidth * ratio;
-
-                if (startY + adjustedHeight > window.innerHeight) {
-                    adjustedHeight = window.innerHeight - startY;
-                    rectWidth = adjustedHeight / ratio;
-                }
-                if (startX + rectWidth > window.innerWidth) {
-                    rectWidth = window.innerWidth - startX;
-                    adjustedHeight = rectWidth * ratio;
-                }
-                rectHeight = adjustedHeight;
-            }
-
-            rectX = Math.min(startX, startX + rectWidth);
-            rectY = Math.min(startY, startY + rectHeight);
-
-            updateRectStyle(rectX, rectY, rectWidth, rectHeight);
-        };
-
-        const handleMouseUp = () => {
-            drawing = false;
-            ui.overlay.classList.remove('active');
-            ui.redrawButton.classList.add('active');
-            ui.modelUI.classList.add('active');
-            document.body.style.overflow = originalBodyOverflow;
-
-            mainRect = { x: rectX, y: rectY, width: rectWidth, height: rectHeight };
-            updateRectStyle(rectX, rectY, rectWidth, rectHeight);
-            document.removeEventListener('mousemove', handleMouseMove);
-            document.removeEventListener('mouseup', handleMouseUp);
-        };
-
-        ui.overlay.addEventListener('mousedown', handleMouseDown);
-        document.addEventListener('mousemove', handleMouseMove);
-        document.addEventListener('mouseup', handleMouseUp);
+      }
+  
+      function stopDrag() {
+        document.removeEventListener('mousemove', handleDrag);
+        document.removeEventListener('mouseup', stopDrag);
+      }
+  
+      document.addEventListener('mousemove', handleDrag);
+      document.addEventListener('mouseup', stopDrag);
     }
-
-    // --- Draggable Elements ---
-    ui.draggers.forEach((dragger) => {
-        dragger.addEventListener('mousedown', (e) => {
-            e.preventDefault();
-            const parentElement = e.target.parentElement;
-            const parentRect = parentElement.getBoundingClientRect();
-            const offsetX = e.clientX - parentRect.left;
-            const offsetY = e.clientY - parentRect.top;
-            const maxX = window.innerWidth - parentRect.width;
-            const maxY = window.innerHeight - parentRect.height;
-            // Track the initial position
-            let dragX = parentRect.left;
-            let dragY = parentRect.top;
-
-            const handleDrag = (event) => {
-                dragX = Math.min(Math.max(0, event.clientX - offsetX), maxX);
-                dragY = Math.min(Math.max(0, event.clientY - offsetY), maxY);
-                parentElement.style.left = `${dragX}px`;
-                parentElement.style.top = `${dragY}px`;
-            };
-
-            const stopDrag = () => {
-                document.removeEventListener('mousemove', handleDrag);
-                document.removeEventListener('mouseup', stopDrag);
-                // Update the main rectangle's position if this is the main draggable element
-                if (parentElement.classList.contains('__extension_aiScreen-rect')) {
-                    updateRectStyle(dragX, dragY, rectWidth, rectHeight);
-                }
-            };
-
-            document.addEventListener('mousemove', handleDrag);
-            document.addEventListener('mouseup', stopDrag);
-        });
-    });
-
-    // --- Update Rectangle Style and Save State ---
-    function updateRectStyle(x, y, width, height) {
-        ui.rect.style.left = `${x}px`;
-        ui.rect.style.top = `${y}px`;
-        ui.rect.style.width = `${width}px`;
-        ui.rect.style.height = `${height}px`;
-
-        mainRect = { x, y, width, height };
-        localStorage.setItem('rectState', JSON.stringify(mainRect));
-        chrome.runtime.sendMessage({
-            target: 'offscreen',
-            type: 'rectUpdate',
-            rect: mainRect,
-            yoffset: window.scrollY,
-            layoutSize: {
-                width: document.documentElement.clientWidth,
-                height: document.documentElement.clientHeight
-            }
-        });
+  
+    function _togglePredictMode(e) {
+      const currentAction = e.target.dataset.for;
+      if (!['start', 'stop'].includes(currentAction)) return;
+  
+      const newAction = currentAction === 'start' ? 'stop' : 'start';
+      e.target.dataset.for = newAction;
+      e.target.textContent = newAction === 'start' ? 'Start predictions' : 'Stop predictions';
+  
+      chrome.runtime.sendMessage({ target: 'worker', type: 'predict', action: currentAction });
+      localStorage.setItem('isPredicting', newAction === 'stop');
     }
-
-    // --- Toggle Prediction Mode ---
-    ui.predictButton.addEventListener('click', async (e) => {
-        const currentAction = e.target.dataset.for;
-        if (currentAction !== 'start' && currentAction !== 'stop') return;
-
-        const newAction = currentAction === 'start' ? 'stop' : 'start';
-        e.target.dataset.for = newAction;
-        e.target.textContent = newAction === 'start' ? 'Start predictions' : 'Stop predictions';
-
-        chrome.runtime.sendMessage({ target: 'worker', type: 'predict', action: currentAction });
-        localStorage.setItem('isPredicting', currentAction === 'start');
-    });
-
-
-    window.addEventListener('resize', () => {
-        sendWindowSizeToOffscren();
-    });
-
-    function sendWindowSizeToOffscren() {
-        // send window width and height to the offscreen document
-        chrome.runtime.sendMessage({
-            target: 'offscreen',
-            type: 'windowResize',
-            windowWidth: document.documentElement.clientWidth,
-            windowHeight: document.documentElement.clientHeight,
-            devicePixelRatio: window.devicePixelRatio
-        });
+  
+    function _handlePredictions({ predictions, imageData, fps }) {
+      UI.results.innerHTML = predictions.map(p => `<div>${p.label}: ${p.probability.toFixed(2)}</div>`).join('');
+      const reconstructed = new ImageData(new Uint8ClampedArray(imageData.data), imageData.width, imageData.height);
+      UI.canvas.width = imageData.width;
+      UI.canvas.height = imageData.height;
+      UI.canvas.getContext('2d').putImageData(reconstructed, 0, 0);
+      UI.fps.textContent = `FPS: ${fps}`;
     }
-    sendWindowSizeToOffscren();
-})();
+  
+    function _updateRect(x, y, width, height) {
+      Object.assign(UI.rect.style, { left: `${x}px`, top: `${y}px`, width: `${width}px`, height: `${height}px` });
+      AppState.mainRect = { x, y, width, height };
+      _saveRectState();
+      chrome.runtime.sendMessage({
+        target: 'offscreen',
+        type: 'rectUpdate',
+        rect: AppState.mainRect,
+        layoutSize: {
+          width: document.documentElement.clientWidth,
+          height: document.documentElement.clientHeight,
+        },
+      });
+    }
+  
+    function _saveRectState() {
+      localStorage.setItem('rectState', JSON.stringify(AppState.mainRect));
+    }
+  
+    function _sendWindowSizeToOffscreen() {
+      chrome.runtime.sendMessage({
+        target: 'offscreen',
+        type: 'windowResize',
+        windowWidth: document.documentElement.clientWidth,
+        windowHeight: document.documentElement.clientHeight,
+        devicePixelRatio: window.devicePixelRatio,
+      });
+    }
+  
+    function _createDragIcon(src) {
+      const img = document.createElement('img');
+      img.src = src;
+      img.alt = 'Drag';
+      img.className = '__extension_aiScreen-dragIcon';
+      return img;
+    }
+  
+    function _getHTML() {
+      return `
+        <div id="__extension_aiScreen">
+          <div class="__extension_aiScreen-modelUI" data-dragable="true">
+            <button class="__extension_aiScreen-predict" data-for="start">Start predictions</button>
+            <button class="__extension_aiScreen-drawArea">Draw Area</button>
+            <button class="__extension_aiScreen-configureModel">Configure Model</button>
+            <div class="__extension_aiScreen-results"></div>
+          </div>
+          <div class="__extension_aiScreen-overlayElements">
+            <div class="__extension_aiScreen-overlay"></div>
+            <div class="__extension_aiScreen-rect" data-dragable="true"></div>
+            <div class="__extension_aiScreen-canvasContainer" data-dragable="true">
+              <div class="__extension_aiScreen-fps"></div>
+              <canvas class="__extension_aiScreen-canvas"></canvas>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+  
+  })();
+  

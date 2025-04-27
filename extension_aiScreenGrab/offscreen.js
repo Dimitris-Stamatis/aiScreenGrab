@@ -9,7 +9,6 @@ const ctx = offscreenCanvas.getContext('2d', { willReadFrequently: true });
 
 let stream = null;
 let rect = { x: 0, y: 0, width: 0, height: 0 };
-let yoffset = 0;
 let sendframesstatus = false;
 let targetTabId = null;
 let isPredicting = false;
@@ -59,7 +58,6 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
 
     case 'rectUpdate':
       rect = message.rect;
-      yoffset = message.yoffset;
       layoutWidth = message.layoutSize?.width;
       layoutHeight = message.layoutSize?.height;
       break;
@@ -131,7 +129,7 @@ async function drawToCanvas() {
 
   // Scale DOM rect into normalized % coordinates
   const xRatio = rect.x / layoutWidth;
-  const yRatio = (rect.y - yoffset) / layoutHeight;
+  const yRatio = (rect.y) / layoutHeight;
   const widthRatio = rect.width / layoutWidth;
   const heightRatio = rect.height / layoutHeight;
 

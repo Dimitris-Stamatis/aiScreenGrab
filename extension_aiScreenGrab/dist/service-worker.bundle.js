@@ -64321,11 +64321,13 @@ async function loadModel(modelType) {
 var modelLoaded = null;
 var modelDetails = {};
 var streamId = null;
-chrome.runtime.onInstalled.addListener(async () => {
+var activeTabs = /* @__PURE__ */ new Set();
+chrome.runtime.onInstalled.addListener(() => {
   console.log("Extension installed.");
 });
 chrome.action.onClicked.addListener(async (tab) => {
-  chrome.offscreen.createDocument({
+  const currentTab = tab.id;
+  await chrome.offscreen.createDocument({
     url: "offscreen.html",
     reasons: ["DISPLAY_MEDIA"],
     justification: "Capture tab stream and run model inference"
@@ -64334,7 +64336,7 @@ chrome.action.onClicked.addListener(async (tab) => {
   const modelDetailsPromise = createDeferredPromise();
   if (!modelDetails) {
     configureModel();
-    const listener = async (message, sender, sendResponse) => {
+    const listener = async (message, sender) => {
       if (message.type === "modelDetailsUpdated") {
         modelDetails = message.modelDetails;
         await setItemInDB("modelDetails", modelDetails);
@@ -64349,44 +64351,35 @@ chrome.action.onClicked.addListener(async (tab) => {
   }
   await modelDetailsPromise.promise;
   modelLoaded = await loadModel(modelDetails.modelType);
-  chrome.runtime.sendMessage({
-    type: "loadModel",
-    target: "offscreen"
-  });
-  const currentTab = tab.id;
+  chrome.runtime.sendMessage({ type: "loadModel", target: "offscreen" });
   await chrome.scripting.executeScript({
     target: { tabId: currentTab },
     files: ["injected.js"]
   });
-  chrome.scripting.insertCSS({
+  await chrome.scripting.insertCSS({
     target: { tabId: currentTab },
     files: ["injected.css"]
   });
-  const aspectRatio = modelDetails.inputShape;
-  if (await isTabCaptured(tab.id)) {
-    chrome.runtime.sendMessage({
-      type: "releaseStream",
-      target: "offscreen"
-    });
+  activeTabs.add(currentTab);
+  if (await isTabCaptured(currentTab)) {
+    chrome.runtime.sendMessage({ type: "releaseStream", target: "offscreen" });
   }
-  streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id });
+  streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: currentTab });
   await chrome.storage.local.set({ streamId });
-  chrome.storage.local.set({ streamId });
   chrome.runtime.sendMessage({
     type: "streamStart",
     target: "offscreen",
     streamId,
-    targetTabId: tab.id
+    targetTabId: currentTab
   });
   chrome.tabs.sendMessage(currentTab, {
     type: "startDrawing",
-    aspectRatio,
+    aspectRatio: modelDetails.inputShape,
     streamId
   });
 });
-chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
+chrome.runtime.onMessage.addListener(async (message, sender) => {
   if (message.target !== "worker") return;
-  console.log(message);
   switch (message.type) {
     case "predict":
       if (message.action === "start") {
@@ -64396,18 +64389,8 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
           streamId,
           targetTabId: message.targetTabId
         });
-        chrome.windows.getCurrent((window2) => {
-          if (window2.state === "fullscreen")
-            return;
-        });
       } else {
-        chrome.runtime.sendMessage({
-          type: "stop-frameCapture",
-          target: "offscreen"
-        });
-        chrome.windows.getCurrent((window2) => {
-          chrome.windows.update(window2.id, { state: "normal" });
-        });
+        chrome.runtime.sendMessage({ type: "stop-frameCapture", target: "offscreen" });
       }
       break;
     case "configureModel":
@@ -64420,8 +64403,31 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
         imageData: message.imageData,
         fps: message.fps
       });
+      break;
   }
   return true;
+});
+chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
+  if (changeInfo.status === "complete" && activeTabs.has(tabId)) {
+    console.log(`Re-injecting into tab ${tabId} after reload/navigation`);
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: ["injected.js"]
+    });
+    await chrome.scripting.insertCSS({
+      target: { tabId },
+      files: ["injected.css"]
+    });
+    const { streamId: savedStreamId } = await chrome.storage.local.get("streamId");
+    chrome.tabs.sendMessage(tabId, {
+      type: "reinjected",
+      aspectRatio: modelDetails.inputShape,
+      streamId: savedStreamId
+    });
+  }
+});
+chrome.tabs.onRemoved.addListener((tabId) => {
+  activeTabs.delete(tabId);
 });
 function createDeferredPromise() {
   let resolve, reject;
@@ -64434,13 +64440,18 @@ function createDeferredPromise() {
 async function isTabCaptured(tabId) {
   return new Promise((resolve) => {
     chrome.tabCapture.getCapturedTabs((capturedTabs) => {
-      const isCaptured = capturedTabs.some((capturedTab) => capturedTab.tabId === tabId);
+      const isCaptured = capturedTabs.some((t) => t.tabId === tabId);
       resolve(isCaptured);
     });
   });
 }
 function configureModel() {
-  chrome.windows.create({ url: "popup.html", type: "popup", width: 600, height: 600 });
+  chrome.windows.create({
+    url: "popup.html",
+    type: "popup",
+    width: 600,
+    height: 600
+  });
 }
 /*! Bundled license information:
 

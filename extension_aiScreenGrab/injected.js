@@ -73,6 +73,8 @@
           _startDrawing(message.aspectRatio);
         } else if (message.type === 'predictions') {
           _handlePredictions(message);
+        } else if (message.type === 'reinjected') {
+            _enableUIElementS();
         }
         return true;
       });
@@ -84,6 +86,15 @@
         AppState.resizeTimeout = setTimeout(_sendWindowSizeToOffscreen, 200);
       });
       _sendWindowSizeToOffscreen(); // Initial send
+    }
+
+    function _enableUIElementS() {
+        UI.overlay.classList.remove('active');
+        UI.rect.classList.add('active');
+        UI.modelUI.classList.add('active');
+        UI.canvas.classList.add('active');
+        UI.results.classList.add('active');
+        UI.fps.classList.add('active');
     }
   
     // --- UI Logic ---

@@ -15,16 +15,30 @@ chrome.runtime.onInstalled.addListener(() => {
 chrome.action.onClicked.addListener(async (tab) => {
   const currentTab = tab.id;
 
-  // Create offscreen document
-  await chrome.offscreen.createDocument({
-    url: 'offscreen.html',
-    reasons: ['DISPLAY_MEDIA'],
-    justification: 'Capture tab stream and run model inference',
-  });
+  // Only create an offscreen page if one doesn't already exist
+  let hasOffscreen = false;
+  try {
+    // MV3 promise-based API
+    hasOffscreen = await chrome.offscreen.hasDocument();
+  } catch {
+    // fallback for callback-based
+    hasOffscreen = await new Promise(resolve => {
+      chrome.offscreen.hasDocument?.({}, exists => resolve(exists));
+    });
+  }
+
+  if (!hasOffscreen) {
+    await chrome.offscreen.createDocument({
+      url: 'offscreen.html',
+      reasons: ['DISPLAY_MEDIA'],
+      justification: 'Capture tab stream and run model inference',
+    });
+  }
 
   // Load or configure the model
   modelDetails = await getItemFromDB('modelDetails');
   const modelDetailsPromise = createDeferredPromise();
+
   if (!modelDetails) {
     configureModel();
     const listener = async (message, sender) => {
@@ -114,7 +128,7 @@ chrome.runtime.onMessage.addListener(async (message, sender) => {
   return true;
 });
 
-// When a tracked tab finishes loading (refresh or full navigation), re-inject
+// Re-inject on reload/navigation
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
   if (changeInfo.status === 'complete' && activeTabs.has(tabId)) {
     console.log(`Re-injecting into tab ${tabId} after reload/navigation`);
@@ -126,7 +140,6 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
       target: { tabId },
       files: ['injected.css'],
     });
-    // Resume drawing if we already have a stream
     const { streamId: savedStreamId } = await chrome.storage.local.get('streamId');
     chrome.tabs.sendMessage(tabId, {
       type: 'reinjected',
@@ -153,8 +166,7 @@ function createDeferredPromise() {
 async function isTabCaptured(tabId) {
   return new Promise((resolve) => {
     chrome.tabCapture.getCapturedTabs((capturedTabs) => {
-      const isCaptured = capturedTabs.some((t) => t.tabId === tabId);
-      resolve(isCaptured);
+      resolve(capturedTabs.some(t => t.tabId === tabId));
     });
   });
 }

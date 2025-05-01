@@ -1,72 +1,103 @@
 import { saveFile, setItemInDB, getItemFromDB } from "./utils/indexedDB.mjs";
 
-const submitbutton = document.querySelector('button[type="submit"]');
+const submitButton = document.querySelector('button[type="submit"]');
+const form = document.getElementById("modelDetails");
+const taskSelect = document.getElementById("inferenceTask");
+const detectOpts = document.getElementById("detectionOptions");
+const outShapeContainer = document.getElementById("outputShapeContainer");
 
-document.getElementById('modelDetails').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  submitbutton.disabled = true;
-  submitbutton.textContent = 'Uploading...';
-
-  const formdata = new FormData(e.target);
-  const selectedfiles = document.getElementById('modelFiles').files;
-
-  let modelFiles = [], modelFileNames = [];
-  if (selectedfiles) {
-    modelFiles = Array.from(selectedfiles);
+// Toggle fields when the user switches task
+taskSelect.addEventListener("change", () => {
+  if (taskSelect.value === "detection") {
+    detectOpts.hidden = false;
+    outShapeContainer.hidden = true;
+  } else {
+    detectOpts.hidden = true;
+    outShapeContainer.hidden = false;
   }
+});
 
+form.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  submitButton.disabled = true;
+  submitButton.textContent = "Uploading...";
+
+  const formData = new FormData(form);
+  const selectedFiles = document.getElementById("modelFiles").files;
+  const modelFiles = Array.from(selectedFiles || []);
+  let modelFileNames = [];
+
+  // save each file into IndexedDB
   try {
-    const savePromises = modelFiles.map(async (file) => {
-      if (!(file instanceof Blob)) {
-        throw new TypeError(`Invalid file type for ${file.name}`);
-      }
-      await saveFile(file);
-      console.log("Saved file:", file.name);
-      return file.name;
-    });
-
-    modelFileNames = await Promise.all(savePromises);
-  } catch (error) {
-    console.error("One or more files failed to save:", error);
-    alert('Failed to save file: ' + error.message);
-    submitbutton.disabled = false;
-    submitbutton.textContent = 'Save';
+    modelFileNames = await Promise.all(
+      modelFiles.map(async (file) => {
+        if (!(file instanceof Blob)) {
+          throw new TypeError(`Invalid file type for ${file.name}`);
+        }
+        await saveFile(file);
+        console.log("Saved file:", file.name);
+        return file.name;
+      })
+    );
+  } catch (err) {
+    console.error("Error saving files:", err);
+    alert("Failed to save files: " + err.message);
+    submitButton.disabled = false;
+    submitButton.textContent = "Save Configuration";
     return;
   }
 
-  const modelDetails = {
-    inputShape: formdata.get('inputShape').toLowerCase(),
-    outputShape: formdata.get('outputShape').toLowerCase(),
-    modelType: formdata.get('modelType'),
-    returnType: formdata.get('returnType'),
+  // assemble modelDetails based on task
+  const inferenceTask = formData.get("inferenceTask");
+  const details = {
     modelFiles: modelFileNames,
+    modelType: formData.get("modelType"),
+    inputShape: formData.get("inputShape").toLowerCase(),
+    inferenceTask,
   };
 
-  await setItemInDB('modelDetails', modelDetails);
+  if (inferenceTask === "classification") {
+    details.outputShape = formData.get("outputShape").toLowerCase();
+  } else {
+    details.scoreThreshold = parseFloat(formData.get("scoreThreshold"));
+    details.maxDetections = parseInt(formData.get("maxDetections"), 10);
+  }
 
-  // Notify the service worker
+  // save to DB + notify service worker
+  await setItemInDB("modelDetails", details);
   chrome.runtime.sendMessage({
-    type: 'modelDetailsUpdated',
-    modelDetails,
+    type: "modelDetailsUpdated",
+    modelDetails: details,
   });
 
-  submitbutton.disabled = false;
-  submitbutton.textContent = 'Save';
-  window.close(); // optional
+  submitButton.disabled = false;
+  submitButton.textContent = "Save Configuration";
+  window.close();
 });
 
 (async () => {
-  const modelDetails = await getItemFromDB('modelDetails');
-  if (!modelDetails) return;
+  const saved = await getItemFromDB("modelDetails");
+  if (!saved) return;
 
-  document.getElementById('inputShape').value = modelDetails.inputShape;
-  document.getElementById('outputShape').value = modelDetails.outputShape;
-  document.getElementById('modelType').value = modelDetails.modelType;
-  document.getElementById('returnType').value = modelDetails.returnType;
+  // restore basic fields
+  document.getElementById("inputShape").value = saved.inputShape;
+  document.getElementById("modelType").value = saved.modelType;
+  taskSelect.value = saved.inferenceTask;
+  taskSelect.dispatchEvent(new Event("change"));
 
-  modelDetails.modelFiles.forEach(file => {
-    const fileElement = document.createElement('li');
-    fileElement.textContent = file;
-    document.getElementById('modelFilesList').appendChild(fileElement);
+  // restore task-specific fields
+  if (saved.inferenceTask === "classification") {
+    document.getElementById("outputShape").value = saved.outputShape || "";
+  } else {
+    document.getElementById("scoreThreshold").value = saved.scoreThreshold ?? 0.5;
+    document.getElementById("maxDetections").value = saved.maxDetections ?? 20;
+  }
+
+  // restore file list UI
+  const listEl = document.getElementById("modelFilesList");
+  saved.modelFiles.forEach((name) => {
+    const li = document.createElement("li");
+    li.textContent = name;
+    listEl.appendChild(li);
   });
 })();

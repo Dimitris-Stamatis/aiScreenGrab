@@ -64511,7 +64511,13 @@ var labels = [];
 async function loadModel(modelType) {
   try {
     console.log(`[Model Loader] Loading ${modelType} model...`);
-    const model2 = modelType === "graph" ? await loadGraphModel(tfIndexedDBLoader) : await loadLayersModel(tfIndexedDBLoader);
+    let model2;
+    if (modelType === "layers") {
+      model2 = await loadLayersModel(tfIndexedDBLoader);
+    } else {
+      model2 = await loadGraphModel(tfIndexedDBLoader);
+      console.log("[Model Loader] Model outputs:", model2.outputNodes);
+    }
     labels = await getItemFromDB("labels") || [];
     if (!labels.length) {
       console.warn("[Model Loader] No labels found in storage.");
@@ -64521,36 +64527,84 @@ async function loadModel(modelType) {
     console.log("[Model Loader] Model loaded successfully.");
     return model2;
   } catch (error) {
-    console.error("Error loading model:", error);
+    console.error("[Model Loader] Error loading model:", error);
     throw error;
   }
 }
-async function predict(model2, imageData, inputShape, topK3) {
+async function predict(model2, imageData, inputShape, topK3 = 5) {
   if (!model2) {
-    console.error("Model not loaded.");
+    console.error("[Predict] Model not loaded.");
     return [];
   }
   if (!inputShape || !/^\d+x\d+$/.test(inputShape)) {
-    console.error("Invalid input shape format. Expected 'HxW' (e.g., '224x224').");
+    console.error("[Predict] Invalid input shape. Expected 'HxW'.");
     return [];
   }
   const [inH, inW] = inputShape.split("x").map(Number);
   const logits = tidy(() => {
-    const tensor2 = browser_exports.fromPixels(imageData).resizeBilinear([inH, inW]).toFloat();
-    const normalized = tensor2.div(255);
-    const batched = normalized.reshape([1, inH, inW, 3]);
-    return model2.predict(batched);
+    const tensor2 = browser_exports.fromPixels(imageData).resizeBilinear([inH, inW]).toFloat().div(255).reshape([1, inH, inW, 3]);
+    return model2.predict(tensor2);
   });
   const data = await logits.data();
-  const results = Array.from(data).map((probability, index) => ({
-    label: labels[index] || `Class ${index}`,
-    probability
+  logits.dispose();
+  const results = Array.from(data).map((prob, i) => ({
+    label: labels[i] ?? `Class ${i}`,
+    probability: prob
   }));
   results.sort((a, b) => b.probability - a.probability);
-  if (topK3 && Number.isInteger(topK3) && topK3 > 0) {
-    return results.slice(0, topK3);
+  return results.slice(0, topK3);
+}
+async function detect(model2, imageData, inputShape, { scoreThreshold = 0.5, maxDetections = 20 } = {}) {
+  if (!model2) throw new Error("detect(): model is required");
+  if (!/^\d+x\d+$/.test(inputShape)) {
+    throw new Error("detect(): invalid inputShape, expected 'HxW'");
   }
-  return results;
+  const [inH, inW] = inputShape.split("x").map(Number);
+  const batched = tidy(
+    () => browser_exports.fromPixels(imageData).resizeBilinear([inH, inW]).toFloat().div(255).reshape([1, inH, inW, 3])
+  );
+  const outputs = model2.execute(batched, [
+    "detection_boxes",
+    "detection_scores",
+    "detection_class_names"
+    // optionally "detection_class_entities" or "detection_class_labels"
+  ]);
+  console.log("[Model] Outputs:", outputs);
+  batched.dispose();
+  const [boxesT, scoresT, namesT] = Array.isArray(outputs) ? outputs : [outputs];
+  try {
+    const [boxesArr, scoresArr, namesArr] = await Promise.all([
+      boxesT.array(),
+      // [N,4]
+      scoresT.array(),
+      // [N]
+      namesT.array()
+      // [N]
+    ]);
+    dispose([boxesT, scoresT, namesT]);
+    const results = [];
+    const count2 = Math.min(boxesArr.length, maxDetections);
+    const W = imageData.width, H = imageData.height;
+    for (let i = 0; i < count2; i++) {
+      const score = scoresArr[i];
+      if (score < scoreThreshold) continue;
+      const [ymin, xmin, ymax, xmax] = boxesArr[i];
+      results.push({
+        bbox: {
+          x: xmin * W,
+          y: ymin * H,
+          width: (xmax - xmin) * W,
+          height: (ymax - ymin) * H
+        },
+        className: namesArr[i],
+        score
+      });
+    }
+    return results;
+  } catch (err) {
+    dispose([boxesT, scoresT, namesT]);
+    throw err;
+  }
 }
 
 // offscreen.js
@@ -64692,7 +64746,21 @@ async function drawToCanvas() {
   }
   previousImageDataHash = currentImageDataHash;
   try {
-    const predictions = await predict(modelLoaded, imageData, modelDetails.inputShape, 5);
+    let predictions;
+    if (modelDetails.inferenceTask === "detection") {
+      console.log("[Offscreen] Running detection");
+      predictions = await detect(
+        modelLoaded,
+        imageData,
+        modelDetails.inputShape,
+        {
+          scoreThreshold: modelDetails.scoreThreshold,
+          maxDetections: modelDetails.maxDetections
+        }
+      );
+    } else {
+      predictions = await predict(modelLoaded, imageData, modelDetails.inputShape, 5);
+    }
     chrome.runtime.sendMessage({
       type: "predictions",
       predictions,

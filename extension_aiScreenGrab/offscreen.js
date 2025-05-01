@@ -1,4 +1,4 @@
-import { predict, loadModel } from "./utils/modelHelpers.mjs";
+import { predict, loadModel, detect } from "./utils/modelHelpers.mjs";
 import { getItemFromDB } from "./utils/indexedDB.mjs";
 
 console.log("Offscreen script loaded");
@@ -122,7 +122,7 @@ let previousImageDataHash = null;
 async function drawToCanvas() {
   if (!sendframesstatus || isPredicting || !modelLoaded || !layoutWidth || !layoutHeight) return;
 
-  const now  = performance.now();
+  const now = performance.now();
   fps = Math.round(1000 / (now - lastFrameTime));
   lastFrameTime = now;
   isPredicting = true;
@@ -165,7 +165,22 @@ async function drawToCanvas() {
   previousImageDataHash = currentImageDataHash;
 
   try {
-    const predictions = await predict(modelLoaded, imageData, modelDetails.inputShape, 5);
+    let predictions;
+    if (modelDetails.inferenceTask === 'detection') {
+      console.log("[Offscreen] Running detection");
+      predictions = await detect(
+        modelLoaded,
+        imageData,
+        modelDetails.inputShape,
+        {
+          scoreThreshold: modelDetails.scoreThreshold,
+          maxDetections: modelDetails.maxDetections
+        }
+      );
+    } else {
+      // classification
+      predictions = await predict(modelLoaded, imageData, modelDetails.inputShape, 5);
+    }
     chrome.runtime.sendMessage({
       type: 'predictions',
       predictions,

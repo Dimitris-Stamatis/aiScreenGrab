@@ -64302,7 +64302,13 @@ var labels = [];
 async function loadModel(modelType) {
   try {
     console.log(`[Model Loader] Loading ${modelType} model...`);
-    const model2 = modelType === "graph" ? await loadGraphModel(tfIndexedDBLoader) : await loadLayersModel(tfIndexedDBLoader);
+    let model2;
+    if (modelType === "layers") {
+      model2 = await loadLayersModel(tfIndexedDBLoader);
+    } else {
+      model2 = await loadGraphModel(tfIndexedDBLoader);
+      console.log("[Model Loader] Model outputs:", model2.outputNodes);
+    }
     labels = await getItemFromDB("labels") || [];
     if (!labels.length) {
       console.warn("[Model Loader] No labels found in storage.");
@@ -64312,7 +64318,7 @@ async function loadModel(modelType) {
     console.log("[Model Loader] Model loaded successfully.");
     return model2;
   } catch (error) {
-    console.error("Error loading model:", error);
+    console.error("[Model Loader] Error loading model:", error);
     throw error;
   }
 }
@@ -64327,11 +64333,21 @@ chrome.runtime.onInstalled.addListener(() => {
 });
 chrome.action.onClicked.addListener(async (tab) => {
   const currentTab = tab.id;
-  await chrome.offscreen.createDocument({
-    url: "offscreen.html",
-    reasons: ["DISPLAY_MEDIA"],
-    justification: "Capture tab stream and run model inference"
-  });
+  let hasOffscreen = false;
+  try {
+    hasOffscreen = await chrome.offscreen.hasDocument();
+  } catch {
+    hasOffscreen = await new Promise((resolve) => {
+      chrome.offscreen.hasDocument?.({}, (exists) => resolve(exists));
+    });
+  }
+  if (!hasOffscreen) {
+    await chrome.offscreen.createDocument({
+      url: "offscreen.html",
+      reasons: ["DISPLAY_MEDIA"],
+      justification: "Capture tab stream and run model inference"
+    });
+  }
   modelDetails = await getItemFromDB("modelDetails");
   const modelDetailsPromise = createDeferredPromise();
   if (!modelDetails) {
@@ -64440,8 +64456,7 @@ function createDeferredPromise() {
 async function isTabCaptured(tabId) {
   return new Promise((resolve) => {
     chrome.tabCapture.getCapturedTabs((capturedTabs) => {
-      const isCaptured = capturedTabs.some((t) => t.tabId === tabId);
-      resolve(isCaptured);
+      resolve(capturedTabs.some((t) => t.tabId === tabId));
     });
   });
 }

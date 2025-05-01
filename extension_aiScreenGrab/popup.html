@@ -1,46 +1,108 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 
 <head>
-    <title>In window AI model prediction</title>
-    <link rel="stylesheet" href="popup.css">
+    <meta charset="UTF-8" />
+    <title>In-Window AI Model Prediction</title>
+    <link rel="stylesheet" href="popup.css" />
 </head>
 
 <body>
-    <h1>AI Model Prediction in window</h1>
+    <h1>AI Model Prediction</h1>
+
     <form id="modelDetails">
-        <label>
-            Model files:
-            <input type="file" id="modelFiles" name="modelFiles" multiple accept=".json,.bin"/>
-        </label>
-        <div class="selectedFiles">
-            <ul id="modelFilesList"></ul>
-        </div>
-        <label>
-            Input Shape:
-            <input type="text" id="inputShape" name="inputShape" placeholder="e.g. 244x244"/>
-        </label>
-        <label>
-            Output Shape:
-            <input type="text" id="outputShape" name="outputShape" placeholder="e.g. 1000"/>
-        </label>
-        <label>
-            Model Type:
-            <select id="modelType" name="modelType">
-                <option value="layer">Layer</option>
-                <option value="graph">Graph</option>
-            </select>
-        </label>
-        <label>
-            Return Type:
-            <select id="returnType" name="returnType">
-                <option value="classes">Classes</option>
-                <option value="boundingbox">Bounding Boxes</option>
-            </select>
-        </label>
-        <button type="submit">Save</button>
+
+        <!-- 1. Model Files -->
+        <fieldset>
+            <legend>1. Upload Model</legend>
+            <label>
+                Model files
+                <input type="file" id="modelFiles" name="modelFiles" multiple accept=".json,.bin" />
+            </label>
+            <div class="selectedFiles">
+                <ul id="modelFilesList"></ul>
+            </div>
+        </fieldset>
+
+        <!-- 2. Model Configuration -->
+        <fieldset>
+            <legend>2. Configuration</legend>
+
+            <label>
+                Model format
+                <select id="modelType" name="modelType">
+                    <option value="layers">Layers model (Keras)</option>
+                    <option value="graph">Graph model (TF SavedModel)</option>
+                </select>
+                <small>Select how your model was exported.</small>
+            </label>
+
+            <label>
+                Inference task
+                <select id="inferenceTask" name="inferenceTask">
+                    <option value="classification">Image Classification</option>
+                    <option value="detection">Object Detection</option>
+                </select>
+                <small>Choose whether you want class probabilities or bounding boxes.</small>
+            </label>
+        </fieldset>
+
+        <!-- 3. Input & Output Settings -->
+        <fieldset>
+            <legend>3. Input & Output</legend>
+
+            <label>
+                Input shape
+                <input type="text" id="inputShape" name="inputShape" placeholder="e.g. 224x224" required />
+                <small>Height × Width for resize before inference.</small>
+            </label>
+
+            <!-- only shown when task = classification -->
+            <label id="outputShapeContainer">
+                Output size
+                <input type="text" id="outputShape" name="outputShape" placeholder="e.g. 1000" />
+                <small>Number of classes (e.g. 1000 for ImageNet).</small>
+            </label>
+        </fieldset>
+
+        <!-- 4. Detection Options (only for Object Detection) -->
+        <fieldset id="detectionOptions" hidden>
+            <legend>4. Detection Settings</legend>
+
+            <label>
+                Score threshold
+                <input type="number" id="scoreThreshold" name="scoreThreshold" min="0" max="1" step="0.01"
+                    value="0.5" />
+                <small>Ignore boxes with confidence &lt; threshold.</small>
+            </label>
+
+            <label>
+                Max detections
+                <input type="number" id="maxDetections" name="maxDetections" min="1" step="1" value="20" />
+                <small>Maximum number of boxes to return.</small>
+            </label>
+        </fieldset>
+
+        <button type="submit">Save Configuration</button>
     </form>
+
     <script type="module" src="popup.mjs"></script>
+    <script>
+        // Toggle fields based on task selection
+        const taskSelect = document.getElementById('inferenceTask');
+        const detectOpts = document.getElementById('detectionOptions');
+        const outShape = document.getElementById('outputShapeContainer');
+
+        taskSelect.addEventListener('change', () => {
+            if (taskSelect.value === 'detection') {
+                detectOpts.hidden = false;
+                outShape.hidden = true;
+            } else {
+                detectOpts.hidden = true;
+                outShape.hidden = false;
+            }
+        });
+    </script>
 </body>
 
 </html>

@@ -17,7 +17,7 @@
             <legend>1. Upload Model</legend>
             <label>
                 Model files
-                <input type="file" id="modelFiles" name="modelFiles" multiple accept=".json,.bin" />
+                <input type="file" id="modelFiles" name="modelFiles" multiple accept="*" />
             </label>
             <div class="selectedFiles">
                 <ul id="modelFilesList"></ul>
@@ -87,22 +87,6 @@
     </form>
 
     <script type="module" src="popup.mjs"></script>
-    <script>
-        // Toggle fields based on task selection
-        const taskSelect = document.getElementById('inferenceTask');
-        const detectOpts = document.getElementById('detectionOptions');
-        const outShape = document.getElementById('outputShapeContainer');
-
-        taskSelect.addEventListener('change', () => {
-            if (taskSelect.value === 'detection') {
-                detectOpts.hidden = false;
-                outShape.hidden = true;
-            } else {
-                detectOpts.hidden = true;
-                outShape.hidden = false;
-            }
-        });
-    </script>
 </body>
 
 </html>

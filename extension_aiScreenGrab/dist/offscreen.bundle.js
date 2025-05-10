@@ -1710,96 +1710,79 @@ var tfIndexedDBLoader = {
     console.log("[Model Loader] Loading files from IndexedDB...");
     const files = await getAllFiles();
     console.log("[Model Loader] Files retrieved:", files);
-    const normalizedFiles = files.map((file) => ({
-      ...file,
-      name: file.name?.toLowerCase?.() || file.id?.toLowerCase?.()
+    const normalizedFiles = files.map((f) => ({
+      ...f,
+      name: (f.name || f.id || "").toLowerCase()
     }));
     const modelJsonMeta = normalizedFiles.find(
-      (file) => file.name?.endsWith("model.json")
-    );
-    const weightFileMetas = normalizedFiles.filter((file) => file.name?.endsWith(".bin")).sort((a, b) => a.name.localeCompare(b.name));
-    const labelsFileMeta = normalizedFiles.find(
-      (file) => file.name?.endsWith("labels.json")
+      (f) => f.name.endsWith("model.json")
     );
     if (!modelJsonMeta) {
       throw new Error("Model JSON file not found in IndexedDB.");
     }
     const modelJsonBlob = await ensureBlob(modelJsonMeta);
-    const modelJsonContent = await fileToString(modelJsonBlob);
-    let modelJson;
-    try {
-      modelJson = JSON.parse(modelJsonContent);
-      console.log("[Model Loader] Model JSON parsed successfully.");
-    } catch (error) {
-      console.error("Error parsing model JSON:", error);
-      throw new Error("Invalid JSON in model.json");
+    const modelJson = JSON.parse(await fileToString(modelJsonBlob));
+    console.log("[Model Loader] Model JSON parsed.");
+    const labelsMeta = normalizedFiles.find((f) => f.name.endsWith("labels.json"));
+    if (labelsMeta) {
+      const labels2 = JSON.parse(await fileToString(await ensureBlob(labelsMeta)));
+      await setItemInDB("labels", labels2);
+      console.log("[Model Loader] Labels saved to IndexedDB.");
     }
-    if (labelsFileMeta) {
-      try {
-        const labelsBlob = await ensureBlob(labelsFileMeta);
-        const labelsText = await fileToString(labelsBlob);
-        const labels2 = JSON.parse(labelsText);
-        console.log("[Model Loader] Labels parsed:", labels2);
-        await setItemInDB("labels", labels2);
-        console.log("[Model Loader] Labels saved to IndexedDB.");
-      } catch (error) {
-        console.error("Error parsing labels JSON:", error);
-        throw new Error("Invalid JSON in labels.json");
+    const signature = modelJson.signature || null;
+    const weightPaths = modelJson.weightsManifest.flatMap((manifest) => manifest.paths).map((p2) => p2.toLowerCase());
+    const weightFileMetas = weightPaths.map((path) => {
+      const fileMeta = normalizedFiles.find((f) => f.name === path);
+      if (!fileMeta) {
+        throw new Error(`Missing weight shard in IndexedDB: ${path}`);
       }
-    }
-    const weightBlobs = await Promise.all(weightFileMetas.map(ensureBlob));
-    const weightData = await concatenateArrayBuffers(weightBlobs);
-    const allWeightSpecs = modelJson.weightsManifest.flatMap((manifest) => manifest.weights);
+      return fileMeta;
+    });
+    const blobs = await Promise.all(weightFileMetas.map(ensureBlob));
+    const weightData = await concatenateArrayBuffers(blobs);
+    const weightSpecs = modelJson.weightsManifest.flatMap((manifest) => manifest.weights);
     console.log("[Model Loader] Model loaded successfully.");
     return {
       modelTopology: modelJson.modelTopology,
-      weightSpecs: allWeightSpecs,
-      weightData
+      weightSpecs,
+      weightData,
+      signature
     };
   }
 };
-async function fileToString(fileBlob) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = () => reject(reader.error);
-    reader.readAsText(fileBlob);
+async function fileToString(blob) {
+  return new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(r.result);
+    r.onerror = () => rej(r.error);
+    r.readAsText(blob);
   });
 }
-async function fileToArrayBuffer(fileBlob) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = () => reject(reader.error);
-    reader.readAsArrayBuffer(fileBlob);
+async function fileToArrayBuffer(blob) {
+  return new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(r.result);
+    r.onerror = () => rej(r.error);
+    r.readAsArrayBuffer(blob);
   });
 }
 async function concatenateArrayBuffers(files) {
-  const buffers = await Promise.all(files.map(fileToArrayBuffer));
-  const totalLength = buffers.reduce((acc, buffer2) => acc + buffer2.byteLength, 0);
-  const concatenated = new Uint8Array(totalLength);
+  const bufs = await Promise.all(files.map(fileToArrayBuffer));
+  const total = bufs.reduce((sum5, b) => sum5 + b.byteLength, 0);
+  const out = new Uint8Array(total);
   let offset = 0;
-  for (const buffer2 of buffers) {
-    concatenated.set(new Uint8Array(buffer2), offset);
-    offset += buffer2.byteLength;
+  for (const b of bufs) {
+    out.set(new Uint8Array(b), offset);
+    offset += b.byteLength;
   }
-  return concatenated;
+  return out.buffer;
 }
-async function ensureBlob(fileOrObject) {
-  if (fileOrObject instanceof Blob) {
-    return fileOrObject;
-  }
-  if (fileOrObject?.file instanceof Blob) {
-    return fileOrObject.file;
-  }
-  if (fileOrObject?.name) {
-    const blob = await getFile(fileOrObject.name);
-    if (!blob) {
-      throw new Error(`Could not find file in IndexedDB: ${fileOrObject.name}`);
-    }
-    return blob;
-  }
-  throw new TypeError("Expected a Blob or object with a file name.");
+async function ensureBlob(fileMeta) {
+  if (fileMeta instanceof Blob) return fileMeta;
+  if (fileMeta.file instanceof Blob) return fileMeta.file;
+  const blob = await getFile(fileMeta.name);
+  if (!blob) throw new Error(`Could not find file: ${fileMeta.name}`);
+  return blob;
 }
 
 // node_modules/@tensorflow/tfjs-core/dist/backends/backend.js
@@ -64517,6 +64500,7 @@ async function loadModel(modelType) {
     } else {
       model2 = await loadGraphModel(tfIndexedDBLoader);
       console.log("[Model Loader] Model outputs:", model2.outputNodes);
+      console.log(model2);
     }
     labels = await getItemFromDB("labels") || [];
     if (!labels.length) {
@@ -64559,29 +64543,29 @@ async function detect(model2, imageData, inputShape, { scoreThreshold = 0.5, max
   if (!/^\d+x\d+$/.test(inputShape)) {
     throw new Error("detect(): invalid inputShape, expected 'HxW'");
   }
-  const [inH, inW] = inputShape.split("x").map(Number);
-  const batched = tidy(
-    () => browser_exports.fromPixels(imageData).resizeBilinear([inH, inW]).toFloat().div(255).reshape([1, inH, inW, 3])
-  );
-  const outputs = model2.execute(batched, [
-    "detection_boxes",
-    "detection_scores",
-    "detection_class_names"
-    // optionally "detection_class_entities" or "detection_class_labels"
-  ]);
-  console.log("[Model] Outputs:", outputs);
-  batched.dispose();
-  const [boxesT, scoresT, namesT] = Array.isArray(outputs) ? outputs : [outputs];
   try {
+    const [inH, inW] = inputShape.split("x").map(Number);
+    const batched = tidy(
+      () => browser_exports.fromPixels(imageData).resizeBilinear([inH, inW]).cast("int32").expandDims(0)
+    );
+    const outputs = await model2.executeAsync(batched, ["detection_boxes", "raw_detection_scores", "num_detections"]);
+    console.log("[Model] Detection outputs:", outputs);
+    const [boxesT2, scoresT2, namesT2] = Array.isArray(outputs) ? outputs : [outputs];
     const [boxesArr, scoresArr, namesArr] = await Promise.all([
-      boxesT.array(),
+      boxesT2.array(),
       // [N,4]
-      scoresT.array(),
+      scoresT2.array(),
       // [N]
-      namesT.array()
+      namesT2.array()
       // [N]
     ]);
-    dispose([boxesT, scoresT, namesT]);
+    console.log("[Model] Detection outputs:", {
+      boxes: boxesArr,
+      scores: scoresArr,
+      names: namesArr
+    });
+    dispose([boxesT2, scoresT2, namesT2]);
+    batched.dispose();
     const results = [];
     const count2 = Math.min(boxesArr.length, maxDetections);
     const W = imageData.width, H = imageData.height;
@@ -64600,8 +64584,10 @@ async function detect(model2, imageData, inputShape, { scoreThreshold = 0.5, max
         score
       });
     }
+    console.log("[Model] Detection results:", results);
     return results;
   } catch (err) {
+    console.error("[Model] Error during detection:", err);
     dispose([boxesT, scoresT, namesT]);
     throw err;
   }
@@ -64736,9 +64722,6 @@ async function drawToCanvas() {
   ctx.clearRect(0, 0, sw, sh);
   ctx.drawImage(video, sx, sy, sw, sh, 0, 0, sw, sh);
   const imageData = ctx.getImageData(0, 0, sw, sh);
-  console.log("[Offscreen] Layout size:", layoutWidth, layoutHeight);
-  console.log("[Offscreen] Video size:", video.videoWidth, video.videoHeight);
-  console.log("[Offscreen] Cropping video at:", sx, sy, sw, sh);
   const currentImageDataHash = hashImageData(imageData.data);
   if (currentImageDataHash === previousImageDataHash) {
     isPredicting = false;

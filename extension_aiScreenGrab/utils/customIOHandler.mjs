@@ -1,126 +1,113 @@
 import { getAllFiles, getFile, setItemInDB } from "./indexedDB.mjs";
 
 export const tfIndexedDBLoader = {
-    async load() {
-        console.log("[Model Loader] Loading files from IndexedDB...");
-        const files = await getAllFiles();
-        console.log("[Model Loader] Files retrieved:", files);
+  async load() {
+    console.log("[Model Loader] Loading files from IndexedDB...");
+    const files = await getAllFiles();
+    console.log("[Model Loader] Files retrieved:", files);
 
-        const normalizedFiles = files.map(file => ({
-            ...file,
-            name: file.name?.toLowerCase?.() || file.id?.toLowerCase?.(),
-        }));
+    // normalize names to lower-case for matching
+    const normalizedFiles = files.map(f => ({
+      ...f,
+      name: (f.name || f.id || "").toLowerCase(),
+    }));
 
-        const modelJsonMeta = normalizedFiles.find(file =>
-            file.name?.endsWith("model.json")
-        );
+    // find model.json
+    const modelJsonMeta = normalizedFiles.find(
+      f => f.name.endsWith("model.json")
+    );
+    if (!modelJsonMeta) {
+      throw new Error("Model JSON file not found in IndexedDB.");
+    }
 
-        const weightFileMetas = normalizedFiles
-            .filter(file => file.name?.endsWith(".bin"))
-            .sort((a, b) => a.name.localeCompare(b.name));
+    // load and parse model.json
+    const modelJsonBlob = await ensureBlob(modelJsonMeta);
+    const modelJson = JSON.parse(await fileToString(modelJsonBlob));
+    console.log("[Model Loader] Model JSON parsed.");
 
-        const labelsFileMeta = normalizedFiles.find(file =>
-            file.name?.endsWith("labels.json")
-        );
+    // optional: load labels.json
+    const labelsMeta = normalizedFiles.find(f => f.name.endsWith("labels.json"));
+    if (labelsMeta) {
+      const labels = JSON.parse(await fileToString(await ensureBlob(labelsMeta)));
+      await setItemInDB("labels", labels);
+      console.log("[Model Loader] Labels saved to IndexedDB.");
+    }
 
-        if (!modelJsonMeta) {
-            throw new Error("Model JSON file not found in IndexedDB.");
-        }
+    const signature = modelJson.signature || null;
 
-        const modelJsonBlob = await ensureBlob(modelJsonMeta);
-        const modelJsonContent = await fileToString(modelJsonBlob);
+    // **NEW**: use exactly the shard filenames from your weightsManifest
+    const weightPaths = modelJson.weightsManifest
+      .flatMap(manifest => manifest.paths)
+      .map(p => p.toLowerCase());
 
-        let modelJson;
-        try {
-            modelJson = JSON.parse(modelJsonContent);
-            console.log("[Model Loader] Model JSON parsed successfully.");
-        } catch (error) {
-            console.error("Error parsing model JSON:", error);
-            throw new Error("Invalid JSON in model.json");
-        }
+    // find each shard by name (no “.bin” suffix assumption)
+    const weightFileMetas = weightPaths.map(path => {
+      const fileMeta = normalizedFiles.find(f => f.name === path);
+      if (!fileMeta) {
+        throw new Error(`Missing weight shard in IndexedDB: ${path}`);
+      }
+      return fileMeta;
+    });
 
-        if (labelsFileMeta) {
-            try {
-                const labelsBlob = await ensureBlob(labelsFileMeta);
-                const labelsText = await fileToString(labelsBlob);
-                const labels = JSON.parse(labelsText);
-                console.log("[Model Loader] Labels parsed:", labels);
+    // load all shards and concatenate
+    const blobs = await Promise.all(weightFileMetas.map(ensureBlob));
+    const weightData = await concatenateArrayBuffers(blobs);
 
-                // Use IndexedDB key-value store instead of chrome.storage
-                await setItemInDB('labels', labels);
-                console.log("[Model Loader] Labels saved to IndexedDB.");
+    // flatten weight specs
+    const weightSpecs = modelJson.weightsManifest
+      .flatMap(manifest => manifest.weights);
 
-            } catch (error) {
-                console.error("Error parsing labels JSON:", error);
-                throw new Error("Invalid JSON in labels.json");
-            }
-        }
-
-        const weightBlobs = await Promise.all(weightFileMetas.map(ensureBlob));
-        const weightData = await concatenateArrayBuffers(weightBlobs);
-
-        const allWeightSpecs = modelJson.weightsManifest.flatMap(manifest => manifest.weights);
-
-        console.log("[Model Loader] Model loaded successfully.");
-
-        return {
-            modelTopology: modelJson.modelTopology,
-            weightSpecs: allWeightSpecs,
-            weightData,
-        };
-    },
+    console.log("[Model Loader] Model loaded successfully.");
+    return {
+      modelTopology: modelJson.modelTopology,
+      weightSpecs,
+      weightData,
+      signature,
+    };
+  },
 };
 
 // =====================
-// Helper functions
+// helper functions (unchanged)
 // =====================
 
-async function fileToString(fileBlob) {
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result);
-        reader.onerror = () => reject(reader.error);
-        reader.readAsText(fileBlob);
-    });
+async function fileToString(blob) {
+  return new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(r.result);
+    r.onerror = () => rej(r.error);
+    r.readAsText(blob);
+  });
 }
 
-async function fileToArrayBuffer(fileBlob) {
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result);
-        reader.onerror = () => reject(reader.error);
-        reader.readAsArrayBuffer(fileBlob);
-    });
+async function fileToArrayBuffer(blob) {
+  return new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(r.result);
+    r.onerror = () => rej(r.error);
+    r.readAsArrayBuffer(blob);
+  });
 }
 
 async function concatenateArrayBuffers(files) {
-    const buffers = await Promise.all(files.map(fileToArrayBuffer));
-    const totalLength = buffers.reduce((acc, buffer) => acc + buffer.byteLength, 0);
-    const concatenated = new Uint8Array(totalLength);
-
-    let offset = 0;
-    for (const buffer of buffers) {
-        concatenated.set(new Uint8Array(buffer), offset);
-        offset += buffer.byteLength;
-    }
-
-    return concatenated;
+  const bufs = await Promise.all(files.map(fileToArrayBuffer));
+  const total = bufs.reduce((sum, b) => sum + b.byteLength, 0);
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const b of bufs) {
+    out.set(new Uint8Array(b), offset);
+    offset += b.byteLength;
+  }
+  return out.buffer;
 }
 
-// New: Ensure we always get a Blob
-async function ensureBlob(fileOrObject) {
-    if (fileOrObject instanceof Blob) {
-        return fileOrObject;
-    }
-    if (fileOrObject?.file instanceof Blob) {
-        return fileOrObject.file;
-    }
-    if (fileOrObject?.name) {
-        const blob = await getFile(fileOrObject.name);
-        if (!blob) {
-            throw new Error(`Could not find file in IndexedDB: ${fileOrObject.name}`);
-        }
-        return blob;
-    }
-    throw new TypeError("Expected a Blob or object with a file name.");
+async function ensureBlob(fileMeta) {
+  // if it's already a Blob
+  if (fileMeta instanceof Blob) return fileMeta;
+  // if getAllFiles gave us a {file: Blob} wrapper
+  if (fileMeta.file instanceof Blob) return fileMeta.file;
+  // otherwise look it up by name
+  const blob = await getFile(fileMeta.name);
+  if (!blob) throw new Error(`Could not find file: ${fileMeta.name}`);
+  return blob;
 }

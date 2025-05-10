@@ -82,6 +82,9 @@ form.addEventListener("submit", async (e) => {
   // restore basic fields
   document.getElementById("inputShape").value = saved.inputShape;
   document.getElementById("modelType").value = saved.modelType;
+  const taskSelect = document.getElementById('inferenceTask');
+
+
   taskSelect.value = saved.inferenceTask;
   taskSelect.dispatchEvent(new Event("change"));
 
@@ -99,5 +102,19 @@ form.addEventListener("submit", async (e) => {
     const li = document.createElement("li");
     li.textContent = name;
     listEl.appendChild(li);
+  });
+
+  // Toggle fields based on task selection
+  const detectOpts = document.getElementById('detectionOptions');
+  const outShape = document.getElementById('outputShapeContainer');
+
+  taskSelect.addEventListener('change', () => {
+    if (taskSelect.value === 'detection') {
+      detectOpts.hidden = false;
+      outShape.hidden = true;
+    } else {
+      detectOpts.hidden = true;
+      outShape.hidden = false;
+    }
   });
 })();

@@ -152,11 +152,11 @@ async function drawToCanvas() {
   ctx.drawImage(video, sx, sy, sw, sh, 0, 0, sw, sh);
 
   const imageData = ctx.getImageData(0, 0, sw, sh);
-
+/*
   console.log("[Offscreen] Layout size:", layoutWidth, layoutHeight);
   console.log("[Offscreen] Video size:", video.videoWidth, video.videoHeight);
   console.log("[Offscreen] Cropping video at:", sx, sy, sw, sh);
-
+*/
   const currentImageDataHash = hashImageData(imageData.data);
   if (currentImageDataHash === previousImageDataHash) {
     isPredicting = false;

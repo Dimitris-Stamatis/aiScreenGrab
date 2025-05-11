@@ -64570,24 +64570,19 @@ async function detect(model2, imageData, inputShape, { scoreThreshold = 0.5, max
     ]);
     dispose([numT2, boxesT2, scoresT2, classesT2]);
     batched2.dispose();
-    let results = [];
+    const rawBoxes = boxesArr[0];
     const numDetections = numArr[0];
-    console.log("Labels:", labels);
+    const results = [];
     for (let i = 0; i < numDetections; i++) {
       const score = scoresArr[i];
       if (score < scoreThreshold) continue;
-      const box = boxesArr[i];
+      const [yMin, xMin, yMax, xMax] = rawBoxes[i];
       const classId = classesArr[i];
       results.push({
         classId,
-        label: labels[classId] ?? `Class ${classId}`,
+        label: labels[classId - 1] ?? `Class ${classId}`,
         score,
-        box: {
-          top: box[0],
-          left: box[1],
-          bottom: box[2],
-          right: box[3]
-        }
+        box: { top: yMin, left: xMin, bottom: yMax, right: xMax }
       });
     }
     results.sort((a, b) => b.score - a.score);

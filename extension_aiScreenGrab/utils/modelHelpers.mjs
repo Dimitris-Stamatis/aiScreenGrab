@@ -125,40 +125,34 @@ export async function detect(
             [numName, boxName, scoreName, className]
         );
 
-        const [ numArr, boxesArr, scoresArr, classesArr ] = await Promise.all([
+        const [numArr, boxesArr, scoresArr, classesArr] = await Promise.all([
             numT.data(),    // Float32Array([N])
             boxesT.array(), // [[ymin,xmin,ymax,xmax],…]
             scoresT.data(), // Float32Array([…])   ← these are your detection_scores
             classesT.data() // Float32Array([…])   ← these are your detection_classes
-          ]);
+        ]);
 
         // clean up
         tf.dispose([numT, boxesT, scoresT, classesT]);
         batched.dispose();
 
-        let results = [];
-        if (numArr.length === 0) {
-            console.warn("[Model] No detections found.");
-            return results;
-        }
+        // drop the batch axis:
+        const rawBoxes = boxesArr[0];   // shape: [numDetections][4]
         const numDetections = numArr[0];
+        const results = [];
+
         for (let i = 0; i < numDetections; i++) {
             const score = scoresArr[i];
             if (score < scoreThreshold) continue;
 
-            const box = boxesArr[i];
+            const [yMin, xMin, yMax, xMax] = rawBoxes[i];
             const classId = classesArr[i];
 
             results.push({
                 classId,
-                label: labels[classId] ?? `Class ${classId}`,
+                label: labels[classId-1] ?? `Class ${classId}`,
                 score,
-                box: {
-                    top: box[0],
-                    left: box[1],
-                    bottom: box[2],
-                    right: box[3],
-                },
+                box: { top: yMin, left: xMin, bottom: yMax, right: xMax },
             });
         }
         results.sort((a, b) => b.score - a.score);

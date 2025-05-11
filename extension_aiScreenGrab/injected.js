@@ -221,7 +221,7 @@
   /**
    * Handle both classification & detection:
    *  - classification: array of {label, probability}
-   *  - detection:      array of {bbox:{x,y,width,height}, class, score}
+   *  - detection:      array of {box:{bottom, left, right, top}, class, score, label}
    */
   function _handlePredictions({ predictions, imageData, fps }) {
     const ctx = UI.canvas.getContext('2d');
@@ -232,26 +232,33 @@
     );
     UI.canvas.width = imageData.width;
     UI.canvas.height = imageData.height;
+    ctx.restore();
     ctx.putImageData(reconstructed, 0, 0);
 
     UI.results.innerHTML = ''; // clear old
 
-    if (predictions.length && predictions[0].bbox) {
+    if (predictions.length && predictions[0].box) {
       // Object Detection
-      ctx.lineWidth = 2;
-      ctx.font = '16px sans-serif';
-      predictions.forEach(det => {
-        const { x, y, width, height } = det.bbox;
-        ctx.strokeStyle = 'red';
-        ctx.strokeRect(x, y, width, height);
+      predictions.forEach(p => {
+        // unpack box coords
+        const { top, left, bottom, right } = p.box;
 
-        const text = `${det.class} (${(det.score * 100).toFixed(1)}%)`;
-        ctx.fillStyle = 'red';
-        ctx.fillText(text, x + 4, y + 16);
+        // 2) convert to pixels
+        const x      = left   * UI.canvas.width;
+        const y      = top    * UI.canvas.height;
+        const width  = (right  - left)   * UI.canvas.width;
+        const height = (bottom - top)    * UI.canvas.height;
+        // pick color by score
+        let color;
+        if (p.score < 0.5) color = 'red';
+        else if (p.score < 0.75) color = 'yellow';
+        else color = 'limegreen';
+        // draw on the image canvas
+        _drawBoundingBox(ctx, x, y, width, height, color);
+        _drawBoundingBoxText(ctx, x, y, p.label, p.score.toFixed(2), color);
       });
-      // also list them below if you like
       UI.results.innerHTML = predictions
-        .map(d => `<div>${d.class}: ${ (d.score * 100).toFixed(1) }%</div>`)
+        .map(p => `<div>${p.label}: ${p.score.toFixed(2)}</div>`)
         .join('');
     } else {
       // Image Classification (existing logic)
@@ -319,5 +326,31 @@
         </div>
       </div>
     `;
+  }
+
+  function _drawBoundingBox(ctx, left, top, width, height, color) {
+    ctx.save();
+    console.log("Drawing bounding box", { left, top, width, height });
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(left, top, width, height);
+  }
+
+  function _drawBoundingBoxText(ctx, left, top, label, score, color) {
+    ctx.font = '14px sans-serif';
+    ctx.textBaseline = 'top';
+    // measure text
+    const text = `${label}: ${score}`;
+    const metrics = ctx.measureText(text);
+    const padding = 4;
+    const textW = metrics.width + padding * 2;
+    const textH = 14 + padding * 2;
+    // draw background box
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+    ctx.fillRect(left, top, textW, textH);
+    // draw text
+    ctx.fillStyle = color;
+    ctx.textAlign = 'left';
+    ctx.fillText(text, left + padding, top + padding);
   }
 })();

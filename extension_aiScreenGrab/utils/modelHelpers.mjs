@@ -111,55 +111,64 @@ export async function detect(
                 .cast("int32")
                 .expandDims(0)
         );
-        // 2) Run inference
-        const outputs = await model.executeAsync(batched, ["detection_boxes", "raw_detection_scores", "num_detections"]);
-        console.log("[Model] Detection outputs:", outputs);
+        const sig = model.signature;
+        const input = sig.inputs['input_tensor'].name;
 
-        // Unpack (might be single tensor if only one name)
-        const [boxesT, scoresT, namesT] = Array.isArray(outputs) ? outputs : [outputs];
+        // Map the logical outputs to the correct Identity names:
+        const numName = sig.outputs['num_detections'].name;     // "Identity_5:0"
+        const boxName = sig.outputs['detection_boxes'].name;    // "Identity_1:0"
+        const scoreName = sig.outputs['Identity_4:0'].name;       // detection_scores
+        const className = sig.outputs['Identity_2:0'].name;       // detection_classes
 
-        // 3) Convert to JS arrays
-        const [boxesArr, scoresArr, namesArr] = await Promise.all([
-            boxesT.array(),   // [N,4]
-            scoresT.array(),  // [N]
-            namesT.array(),   // [N]
-        ]);
+        const [numT, boxesT, scoresT, classesT] = await model.executeAsync(
+            { [input]: batched },
+            [numName, boxName, scoreName, className]
+        );
 
-        console.log("[Model] Detection outputs:", {
-            boxes: boxesArr,
-            scores: scoresArr,
-            names: namesArr,
-        });
+        const [ numArr, boxesArr, scoresArr, classesArr ] = await Promise.all([
+            numT.data(),    // Float32Array([N])
+            boxesT.array(), // [[ymin,xmin,ymax,xmax],…]
+            scoresT.data(), // Float32Array([…])   ← these are your detection_scores
+            classesT.data() // Float32Array([…])   ← these are your detection_classes
+          ]);
 
         // clean up
-        tf.dispose([boxesT, scoresT, namesT]);
+        tf.dispose([numT, boxesT, scoresT, classesT]);
         batched.dispose();
 
-        // 4) Build results up to maxDetections
-        const results = [];
-        const count = Math.min(boxesArr.length, maxDetections);
-        const W = imageData.width, H = imageData.height;
-
-        for (let i = 0; i < count; i++) {
+        let results = [];
+        if (numArr.length === 0) {
+            console.warn("[Model] No detections found.");
+            return results;
+        }
+        const numDetections = numArr[0];
+        for (let i = 0; i < numDetections; i++) {
             const score = scoresArr[i];
             if (score < scoreThreshold) continue;
-            const [ymin, xmin, ymax, xmax] = boxesArr[i];
+
+            const box = boxesArr[i];
+            const classId = classesArr[i];
+
             results.push({
-                bbox: {
-                    x: xmin * W,
-                    y: ymin * H,
-                    width: (xmax - xmin) * W,
-                    height: (ymax - ymin) * H,
-                },
-                className: namesArr[i],
+                classId,
+                label: labels[classId] ?? `Class ${classId}`,
                 score,
+                box: {
+                    top: box[0],
+                    left: box[1],
+                    bottom: box[2],
+                    right: box[3],
+                },
             });
         }
-        console.log("[Model] Detection results:", results);
-        return results;
-    } catch (err) {
+        results.sort((a, b) => b.score - a.score);
+        console.log("[Model] Detection results sorted:", results);
+        return results.slice(0, maxDetections);
+    }
+    catch (err) {
         console.error("[Model] Error during detection:", err);
-        tf.dispose([boxesT, scoresT, namesT]);
+        tf.dispose([numT, boxesT, scoresT, classesT]);
+        if (batched) batched.dispose();
         throw err;
     }
 }

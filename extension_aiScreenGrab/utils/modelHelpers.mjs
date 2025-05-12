@@ -1,38 +1,26 @@
 import { tfIndexedDBLoader } from "./customIOHandler.mjs";
-import { getItemFromDB } from "./indexedDB.mjs";
 import * as tf from "@tensorflow/tfjs";
+import { getItemFromDB } from "./indexedDB.mjs";
 
-let labels = [];
-
-/**
+/*
  * Load a model from IndexedDB using the appropriate TensorFlow.js API.
  * Supports three model types:
  *  - "layers"     → tf.loadLayersModel
  *  - "graph"      → tf.loadGraphModel (classification)
  *  - "detector"   → tf.loadGraphModel (object-detection)
  */
-export async function loadModel(modelType) {
+
+let labels = null;
+export async function loadModel() {
     try {
-        console.log(`[Model Loader] Loading ${modelType} model...`);
-
+        console.log(`[Model Loader] Loading model...`);
         let model;
-        if (modelType === "layers") {
-            model = await tf.loadLayersModel(tfIndexedDBLoader);
-        } else {
-            // graph & detector both use GraphModel loader
-            model = await tf.loadGraphModel(tfIndexedDBLoader);
-            console.log("[Model Loader] Model outputs:", model.outputNodes);
-            console.log(model);
-        }
-
-        labels = (await getItemFromDB("labels")) || [];
-        if (!labels.length) {
-            console.warn("[Model Loader] No labels found in storage.");
-        } else {
-            console.log("[Model Loader] Labels loaded:", labels);
-        }
-
+        // graph & detector both use GraphModel loader
+        model = await tf.loadGraphModel(tfIndexedDBLoader);
+        console.log("[Model Loader] Model outputs:", model.outputNodes);
+        console.log(model);
         console.log("[Model Loader] Model loaded successfully.");
+        labels = await getItemFromDB("labels");
         return model;
     } catch (error) {
         console.error("[Model Loader] Error loading model:", error);
@@ -140,6 +128,7 @@ export async function detect(
         const rawBoxes = boxesArr[0];   // shape: [numDetections][4]
         const numDetections = numArr[0];
         const results = [];
+        console.log(labels);
 
         for (let i = 0; i < numDetections; i++) {
             const score = scoresArr[i];
@@ -150,7 +139,7 @@ export async function detect(
 
             results.push({
                 classId,
-                label: labels[classId-1] ?? `Class ${classId}`,
+                label: labels[classId] ?? `Class ${classId}`,
                 score,
                 box: { top: yMin, left: xMin, bottom: yMax, right: xMax },
             });

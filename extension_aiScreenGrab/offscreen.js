@@ -33,11 +33,11 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
       break;
 
     case 'loadModel':
-      modelDetails = message.modelDetails || await getItemFromDB('modelDetails');
+      modelDetails = await getItemFromDB('modelDetails');
       console.log("[Offscreen] Loading model with details:", modelDetails);
 
       try {
-        modelLoaded = await loadModel(modelDetails.modelType);
+        modelLoaded = await loadModel();
         console.log("[Offscreen] Model loaded successfully");
       } catch (err) {
         console.error("[Offscreen] Failed to load model:", err);

@@ -43,9 +43,7 @@ chrome.action.onClicked.addListener(async (tab) => {
     configureModel();
     const listener = async (message, sender) => {
       if (message.type === 'modelDetailsUpdated') {
-        modelDetails = message.modelDetails;
-        await setItemInDB('modelDetails', modelDetails);
-        modelLoaded = await loadModel(modelDetails.modelType);
+        modelLoaded = await loadModel(message.modelDetails.modelType);
         modelDetailsPromise.resolve();
         chrome.runtime.onMessage.removeListener(listener);
       }

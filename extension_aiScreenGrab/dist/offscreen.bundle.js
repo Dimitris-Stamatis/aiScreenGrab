@@ -1714,6 +1714,10 @@ var tfIndexedDBLoader = {
       ...f,
       name: (f.name || f.id || "").toLowerCase()
     }));
+    const modelDetails2 = await getItemFromDB("modelDetails");
+    if (!modelDetails2) {
+      throw new Error("Model details not found in IndexedDB.");
+    }
     const modelJsonMeta = normalizedFiles.find(
       (f) => f.name.endsWith("model.json")
     );
@@ -1723,12 +1727,40 @@ var tfIndexedDBLoader = {
     const modelJsonBlob = await ensureBlob(modelJsonMeta);
     const modelJson = JSON.parse(await fileToString(modelJsonBlob));
     console.log("[Model Loader] Model JSON parsed.");
-    const labelsMeta = normalizedFiles.find((f) => f.name.endsWith("labels.json"));
-    if (labelsMeta) {
-      const labels2 = JSON.parse(await fileToString(await ensureBlob(labelsMeta)));
-      await setItemInDB("labels", labels2);
-      console.log("[Model Loader] Labels saved to IndexedDB.");
+    if (modelDetails2.labelsFormat === "json") {
+      const labelsMeta = normalizedFiles.find(
+        (f) => f.name.endsWith("labels.json")
+      );
+      if (labelsMeta) {
+        const labelsBlob = await ensureBlob(labelsMeta);
+        const labelsJson = JSON.parse(await fileToString(labelsBlob));
+        modelJson.labels = labelsJson;
+        console.log("[Model Loader] Labels JSON parsed.");
+      }
+    } else if (modelDetails2.labelsFormat === "simpletext" || modelDetails2.labelsFormat === "simpletextwithindex") {
+      const labelsMeta = normalizedFiles.find(
+        (f) => f.name.endsWith("labels.txt")
+      );
+      if (labelsMeta) {
+        const labelsBlob = await ensureBlob(labelsMeta);
+        const labelsText = await fileToString(labelsBlob);
+        if (modelDetails2.labelsFormat === "simpletext") {
+          modelJson.labels = labelsText.split("\n").map((label) => label.trim()).filter((label) => label);
+        } else {
+          modelJson.labels = {};
+          const labelsArray = labelsText.split("\n").map((label) => label.trim()).filter((label) => label);
+          labelsArray.forEach((label) => {
+            const [index, labelText] = label.split(modelDetails2.labelsSeparator);
+            if (labelText) {
+              modelJson.labels[index] = labelText;
+            }
+          });
+        }
+        console.log("[Model Loader] Labels TXT parsed.");
+      }
     }
+    await setItemInDB("labels", modelJson.labels);
+    console.log("[Model Loader] Model labels:", modelJson.labels);
     const signature = modelJson.signature || null;
     const weightPaths = modelJson.weightsManifest.flatMap((manifest) => manifest.paths).map((p2) => p2.toLowerCase());
     const weightFileMetas = weightPaths.map((path) => {
@@ -23663,70 +23695,6 @@ Functional.className = "Functional";
 serialization_exports.registerClass(Functional);
 
 // node_modules/@tensorflow/tfjs-layers/dist/models.js
-async function loadLayersModel(pathOrIOHandler, options) {
-  if (options == null) {
-    options = {};
-  }
-  if (typeof pathOrIOHandler === "string") {
-    const handlers = io_exports.getLoadHandlers(pathOrIOHandler, options);
-    if (handlers.length === 0) {
-      handlers.push(io_exports.browserHTTPRequest(pathOrIOHandler, options));
-    } else if (handlers.length > 1) {
-      throw new ValueError(`Found more than one (${handlers.length}) load handlers for URL '${pathOrIOHandler}'`);
-    }
-    pathOrIOHandler = handlers[0];
-  }
-  return loadLayersModelFromIOHandler(pathOrIOHandler, void 0, options);
-}
-async function loadLayersModelFromIOHandler(handler, customObjects, options) {
-  if (options == null) {
-    options = {};
-  }
-  if (handler.load == null) {
-    throw new ValueError("Cannot proceed with model loading because the IOHandler provided does not have the `load` method implemented.");
-  }
-  const artifacts = await handler.load();
-  let modelTopology = artifacts.modelTopology;
-  if (modelTopology["model_config"] != null) {
-    modelTopology = modelTopology["model_config"];
-  }
-  const strict = options.strict == null ? true : options.strict;
-  const fastWeightInit = artifacts.weightData != null && artifacts.weightSpecs != null && strict;
-  const model2 = deserialize(convertPythonicToTs(modelTopology), customObjects, fastWeightInit);
-  const trainingConfig = artifacts.trainingConfig;
-  if (trainingConfig != null) {
-    model2.loadTrainingConfig(trainingConfig);
-  }
-  if (artifacts.userDefinedMetadata != null) {
-    model2.setUserDefinedMetadata(artifacts.userDefinedMetadata);
-  }
-  if (artifacts.weightData != null) {
-    if (artifacts.weightSpecs == null) {
-      throw new ValueError("LayersModel artifacts contains weight data, but not weight specs. Therefore loading of weights cannot proceed.");
-    }
-    const { modelWeights, optimizerWeights } = decodeModelAndOptimizerWeights(artifacts.weightData, artifacts.weightSpecs);
-    model2.loadWeights(modelWeights, strict);
-    if (model2.optimizer != null && optimizerWeights.length > 0) {
-      await model2.optimizer.setWeights(optimizerWeights);
-    }
-    dispose(modelWeights);
-    dispose(optimizerWeights.map((w) => w.tensor));
-  }
-  return model2;
-}
-function decodeModelAndOptimizerWeights(weightData, specs) {
-  const name2Tensor = io_exports.decodeWeights(weightData, specs);
-  const modelWeights = {};
-  const optimizerWeights = [];
-  specs.forEach((spec) => {
-    if (spec.group === "optimizer") {
-      optimizerWeights.push({ name: spec.name, tensor: name2Tensor[spec.name] });
-    } else {
-      modelWeights[spec.name] = name2Tensor[spec.name];
-    }
-  });
-  return { modelWeights, optimizerWeights };
-}
 var Sequential = class _Sequential extends LayersModel {
   constructor(args) {
     super({ inputs: [], outputs: [] });
@@ -64490,25 +64458,16 @@ for (const kernelConfig of kernelConfigs2) {
 }
 
 // utils/modelHelpers.mjs
-var labels = [];
-async function loadModel(modelType) {
+var labels = null;
+async function loadModel() {
   try {
-    console.log(`[Model Loader] Loading ${modelType} model...`);
+    console.log(`[Model Loader] Loading model...`);
     let model2;
-    if (modelType === "layers") {
-      model2 = await loadLayersModel(tfIndexedDBLoader);
-    } else {
-      model2 = await loadGraphModel(tfIndexedDBLoader);
-      console.log("[Model Loader] Model outputs:", model2.outputNodes);
-      console.log(model2);
-    }
-    labels = await getItemFromDB("labels") || [];
-    if (!labels.length) {
-      console.warn("[Model Loader] No labels found in storage.");
-    } else {
-      console.log("[Model Loader] Labels loaded:", labels);
-    }
+    model2 = await loadGraphModel(tfIndexedDBLoader);
+    console.log("[Model Loader] Model outputs:", model2.outputNodes);
+    console.log(model2);
     console.log("[Model Loader] Model loaded successfully.");
+    labels = await getItemFromDB("labels");
     return model2;
   } catch (error) {
     console.error("[Model Loader] Error loading model:", error);
@@ -64573,6 +64532,7 @@ async function detect(model2, imageData, inputShape, { scoreThreshold = 0.5, max
     const rawBoxes = boxesArr[0];
     const numDetections = numArr[0];
     const results = [];
+    console.log(labels);
     for (let i = 0; i < numDetections; i++) {
       const score = scoresArr[i];
       if (score < scoreThreshold) continue;
@@ -64580,7 +64540,7 @@ async function detect(model2, imageData, inputShape, { scoreThreshold = 0.5, max
       const classId = classesArr[i];
       results.push({
         classId,
-        label: labels[classId - 1] ?? `Class ${classId}`,
+        label: labels[classId] ?? `Class ${classId}`,
         score,
         box: { top: yMin, left: xMin, bottom: yMax, right: xMax }
       });
@@ -64624,10 +64584,10 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
       video.srcObject = null;
       break;
     case "loadModel":
-      modelDetails = message.modelDetails || await getItemFromDB("modelDetails");
+      modelDetails = await getItemFromDB("modelDetails");
       console.log("[Offscreen] Loading model with details:", modelDetails);
       try {
-        modelLoaded = await loadModel(modelDetails.modelType);
+        modelLoaded = await loadModel();
         console.log("[Offscreen] Model loaded successfully");
       } catch (err) {
         console.error("[Offscreen] Failed to load model:", err);

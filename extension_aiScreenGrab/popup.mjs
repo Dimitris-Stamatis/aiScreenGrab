@@ -4,16 +4,13 @@ const submitButton = document.querySelector('button[type="submit"]');
 const form = document.getElementById("modelDetails");
 const taskSelect = document.getElementById("inferenceTask");
 const detectOpts = document.getElementById("detectionOptions");
-const outShapeContainer = document.getElementById("outputShapeContainer");
 
 // Toggle fields when the user switches task
 taskSelect.addEventListener("change", () => {
   if (taskSelect.value === "detection") {
     detectOpts.hidden = false;
-    outShapeContainer.hidden = true;
   } else {
     detectOpts.hidden = true;
-    outShapeContainer.hidden = false;
   }
 });
 
@@ -53,11 +50,12 @@ form.addEventListener("submit", async (e) => {
     modelFiles: modelFileNames,
     modelType: formData.get("modelType"),
     inputShape: formData.get("inputShape").toLowerCase(),
+    labelsFormat: formData.get("labelsFormat"),
+    labelsSeparator: formData.get("labelsSeparator"),
     inferenceTask,
   };
 
   if (inferenceTask === "classification") {
-    details.outputShape = formData.get("outputShape").toLowerCase();
   } else {
     details.scoreThreshold = parseFloat(formData.get("scoreThreshold"));
     details.maxDetections = parseInt(formData.get("maxDetections"), 10);
@@ -90,7 +88,6 @@ form.addEventListener("submit", async (e) => {
 
   // restore task-specific fields
   if (saved.inferenceTask === "classification") {
-    document.getElementById("outputShape").value = saved.outputShape || "";
   } else {
     document.getElementById("scoreThreshold").value = saved.scoreThreshold ?? 0.5;
     document.getElementById("maxDetections").value = saved.maxDetections ?? 20;
@@ -106,15 +103,15 @@ form.addEventListener("submit", async (e) => {
 
   // Toggle fields based on task selection
   const detectOpts = document.getElementById('detectionOptions');
-  const outShape = document.getElementById('outputShapeContainer');
 
   taskSelect.addEventListener('change', () => {
     if (taskSelect.value === 'detection') {
       detectOpts.hidden = false;
-      outShape.hidden = true;
     } else {
       detectOpts.hidden = true;
-      outShape.hidden = false;
     }
   });
+
+  document.getElementById("labelsFormat").value = saved.labelsFormat;
+  document.getElementById("labelsSeparator").value = saved.labelsSeparator;
 })();

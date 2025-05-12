@@ -27,16 +27,6 @@
         <!-- 2. Model Configuration -->
         <fieldset>
             <legend>2. Configuration</legend>
-
-            <label>
-                Model format
-                <select id="modelType" name="modelType">
-                    <option value="layers">Layers model (Keras)</option>
-                    <option value="graph">Graph model (TF SavedModel)</option>
-                </select>
-                <small>Select how your model was exported.</small>
-            </label>
-
             <label>
                 Inference task
                 <select id="inferenceTask" name="inferenceTask">
@@ -44,6 +34,19 @@
                     <option value="detection">Object Detection</option>
                 </select>
                 <small>Choose whether you want class probabilities or bounding boxes.</small>
+            </label>
+            <label>
+                Labels format
+                <select id="labelsFormat" name="labelsFormat">
+                    <option value="simpletext">Line by line text</option>
+                    <option value="simpletextwithindex">Line by line text with indexes</option>
+                    <option value="json">JSON</option>
+                </select>
+            </label>
+            <label>
+                Separator
+                <input type="text" id="labelsSeparator" name="labelsSeparator" placeholder="e.g. , or ;" value=""/>
+                <small>Separator for labels in Line by line text with indexes. Defaults to space character.</small>
             </label>
         </fieldset>
 
@@ -55,13 +58,6 @@
                 Input shape
                 <input type="text" id="inputShape" name="inputShape" placeholder="e.g. 224x224" required />
                 <small>Height × Width for resize before inference.</small>
-            </label>
-
-            <!-- only shown when task = classification -->
-            <label id="outputShapeContainer">
-                Output size
-                <input type="text" id="outputShape" name="outputShape" placeholder="e.g. 1000" />
-                <small>Number of classes (e.g. 1000 for ImageNet).</small>
             </label>
         </fieldset>
 

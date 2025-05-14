@@ -59,6 +59,25 @@
                 <input type="text" id="inputShape" name="inputShape" placeholder="e.g. 224x224" required />
                 <small>Height × Width for resize before inference.</small>
             </label>
+            
+            <legend>Output matching</legend>
+            <small>Match the output keys in the signature of the model to the mentioned values</small>
+            <label>
+                Number of detections
+                <input type="text" id="numDetections" name="numDetections" placeholder="e.g. num_detections, num_boxes" />
+            </label>
+            <label>
+                Detection boxes
+                <input type="text" id="detectionBoxes" name="detectionBoxes" placeholder="e.g. boxes, bboxes" />
+            </label>
+            <label>
+                Scores
+                <input type="text" id="scores" name="scores" placeholder="e.g. scores, probs" />
+            </label>
+            <label>
+                Class Name
+                <input type="text" id="classNames" name="classNames" placeholder="e.g. class, label" />
+            </label>
         </fieldset>
 
         <!-- 4. Detection Options (only for Object Detection) -->

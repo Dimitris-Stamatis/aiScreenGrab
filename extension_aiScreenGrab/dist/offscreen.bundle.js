@@ -64497,13 +64497,13 @@ async function predict(model2, imageData, inputShape, topK3 = 5) {
   results.sort((a, b) => b.probability - a.probability);
   return results.slice(0, topK3);
 }
-async function detect(model2, imageData, inputShape, { scoreThreshold = 0.5, maxDetections = 20 } = {}) {
+async function detect(model2, imageData, modelDetails2) {
   if (!model2) throw new Error("detect(): model is required");
-  if (!/^\d+x\d+$/.test(inputShape)) {
+  if (!/^\d+x\d+$/.test(modelDetails2.inputShape)) {
     throw new Error("detect(): invalid inputShape, expected 'HxW'");
   }
   try {
-    const [inH, inW] = inputShape.split("x").map(Number);
+    const [inH, inW] = modelDetails2.inputShape.split("x").map(Number);
     const batched2 = tidy(
       () => browser_exports.fromPixels(imageData).resizeBilinear([inH, inW]).cast("int32").expandDims(0)
     );
@@ -64535,7 +64535,7 @@ async function detect(model2, imageData, inputShape, { scoreThreshold = 0.5, max
     console.log(labels);
     for (let i = 0; i < numDetections; i++) {
       const score = scoresArr[i];
-      if (score < scoreThreshold) continue;
+      if (score < modelDetails2.scoreThreshold) continue;
       const [yMin, xMin, yMax, xMax] = rawBoxes[i];
       const classId = classesArr[i];
       results.push({
@@ -64547,7 +64547,7 @@ async function detect(model2, imageData, inputShape, { scoreThreshold = 0.5, max
     }
     results.sort((a, b) => b.score - a.score);
     console.log("[Model] Detection results sorted:", results);
-    return results.slice(0, maxDetections);
+    return results.slice(0, modelDetails2.maxDetections);
   } catch (err) {
     console.error("[Model] Error during detection:", err);
     dispose([numT, boxesT, scoresT, classesT]);
@@ -64693,16 +64693,13 @@ async function drawToCanvas() {
   previousImageDataHash = currentImageDataHash;
   try {
     let predictions;
+    console.log("Model details:", modelDetails);
     if (modelDetails.inferenceTask === "detection") {
       console.log("[Offscreen] Running detection");
       predictions = await detect(
         modelLoaded,
         imageData,
-        modelDetails.inputShape,
-        {
-          scoreThreshold: modelDetails.scoreThreshold,
-          maxDetections: modelDetails.maxDetections
-        }
+        modelDetails
       );
     } else {
       predictions = await predict(modelLoaded, imageData, modelDetails.inputShape, 5);

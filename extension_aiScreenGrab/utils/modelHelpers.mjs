@@ -78,15 +78,14 @@ export async function predict(model, imageData, inputShape, topK = 5) {
 export async function detect(
     model,
     imageData,
-    inputShape,
-    { scoreThreshold = 0.5, maxDetections = 20 } = {}
+    modelDetails
 ) {
     if (!model) throw new Error("detect(): model is required");
-    if (!/^\d+x\d+$/.test(inputShape)) {
+    if (!/^\d+x\d+$/.test(modelDetails.inputShape)) {
         throw new Error("detect(): invalid inputShape, expected 'HxW'");
     }
     try {
-        const [inH, inW] = inputShape.split("x").map(Number);
+        const [inH, inW] = modelDetails.inputShape.split("x").map(Number);
 
         // 1) Preprocess into [1,H,W,3]
         const batched = tf.tidy(() =>
@@ -103,10 +102,10 @@ export async function detect(
         const input = sig.inputs['input_tensor'].name;
 
         // Map the logical outputs to the correct Identity names:
-        const numName = sig.outputs['num_detections'].name;     // "Identity_5:0"
-        const boxName = sig.outputs['detection_boxes'].name;    // "Identity_1:0"
-        const scoreName = sig.outputs['Identity_4:0'].name;       // detection_scores
-        const className = sig.outputs['Identity_2:0'].name;       // detection_classes
+        const numName = sig.outputs['num_detections'].name;
+        const boxName = sig.outputs['detection_boxes'].name;
+        const scoreName = sig.outputs['Identity_4:0'].name;
+        const className = sig.outputs['Identity_2:0'].name;
 
         const [numT, boxesT, scoresT, classesT] = await model.executeAsync(
             { [input]: batched },
@@ -132,7 +131,7 @@ export async function detect(
 
         for (let i = 0; i < numDetections; i++) {
             const score = scoresArr[i];
-            if (score < scoreThreshold) continue;
+            if (score < modelDetails.scoreThreshold) continue;
 
             const [yMin, xMin, yMax, xMax] = rawBoxes[i];
             const classId = classesArr[i];
@@ -146,7 +145,7 @@ export async function detect(
         }
         results.sort((a, b) => b.score - a.score);
         console.log("[Model] Detection results sorted:", results);
-        return results.slice(0, maxDetections);
+        return results.slice(0, modelDetails.maxDetections);
     }
     catch (err) {
         console.error("[Model] Error during detection:", err);

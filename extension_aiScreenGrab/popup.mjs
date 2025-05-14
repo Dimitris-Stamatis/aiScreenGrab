@@ -32,7 +32,6 @@ form.addEventListener("submit", async (e) => {
           throw new TypeError(`Invalid file type for ${file.name}`);
         }
         await saveFile(file);
-        console.log("Saved file:", file.name);
         return file.name;
       })
     );
@@ -48,11 +47,16 @@ form.addEventListener("submit", async (e) => {
   const inferenceTask = formData.get("inferenceTask");
   const details = {
     modelFiles: modelFileNames,
-    modelType: formData.get("modelType"),
     inputShape: formData.get("inputShape").toLowerCase(),
     labelsFormat: formData.get("labelsFormat"),
     labelsSeparator: formData.get("labelsSeparator"),
     inferenceTask,
+    outputs: {
+      numDetections: formData.get("numDetections"),
+      detectionBoxes: formData.get("detectionBoxes"),
+      scores: formData.get("scores"),
+      classNames: formData.get("classNames"),
+    },
   };
 
   if (inferenceTask === "classification") {
@@ -79,7 +83,6 @@ form.addEventListener("submit", async (e) => {
 
   // restore basic fields
   document.getElementById("inputShape").value = saved.inputShape;
-  document.getElementById("modelType").value = saved.modelType;
   const taskSelect = document.getElementById('inferenceTask');
 
 
@@ -114,4 +117,8 @@ form.addEventListener("submit", async (e) => {
 
   document.getElementById("labelsFormat").value = saved.labelsFormat;
   document.getElementById("labelsSeparator").value = saved.labelsSeparator;
+  document.getElementById("numDetections").value = saved.outputs['numDetections'];
+  document.getElementById("detectionBoxes").value = saved.outputs['detectionBoxes'];
+  document.getElementById("scores").value = saved.outputs['scores'];
+  document.getElementById("classNames").value = saved.outputs['classNames'];
 })();

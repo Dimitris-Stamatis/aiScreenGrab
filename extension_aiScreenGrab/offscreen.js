@@ -171,11 +171,7 @@ async function drawToCanvas() {
       predictions = await detect(
         modelLoaded,
         imageData,
-        modelDetails.inputShape,
-        {
-          scoreThreshold: modelDetails.scoreThreshold,
-          maxDetections: modelDetails.maxDetections
-        }
+        modelDetails
       );
     } else {
       // classification

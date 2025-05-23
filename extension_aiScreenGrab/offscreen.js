@@ -153,17 +153,13 @@ async function drawToCanvas() {
 
   const imageData = ctx.getImageData(0, 0, sw, sh);
 /*
-  console.log("[Offscreen] Layout size:", layoutWidth, layoutHeight);
-  console.log("[Offscreen] Video size:", video.videoWidth, video.videoHeight);
-  console.log("[Offscreen] Cropping video at:", sx, sy, sw, sh);
-*/
   const currentImageDataHash = hashImageData(imageData.data);
   if (currentImageDataHash === previousImageDataHash) {
     isPredicting = false;
     return;
   }
   previousImageDataHash = currentImageDataHash;
-
+*/
   try {
     let predictions;
     if (modelDetails.inferenceTask === 'detection') {

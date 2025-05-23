@@ -64660,7 +64660,6 @@ video.addEventListener("pause", () => {
     frameInterval = null;
   }
 });
-var previousImageDataHash = null;
 async function drawToCanvas() {
   if (!sendframesstatus || isPredicting || !modelLoaded || !layoutWidth || !layoutHeight) return;
   const now2 = performance.now();
@@ -64685,15 +64684,8 @@ async function drawToCanvas() {
   ctx.clearRect(0, 0, sw, sh);
   ctx.drawImage(video, sx, sy, sw, sh, 0, 0, sw, sh);
   const imageData = ctx.getImageData(0, 0, sw, sh);
-  const currentImageDataHash = hashImageData(imageData.data);
-  if (currentImageDataHash === previousImageDataHash) {
-    isPredicting = false;
-    return;
-  }
-  previousImageDataHash = currentImageDataHash;
   try {
     let predictions;
-    console.log("Model details:", modelDetails);
     if (modelDetails.inferenceTask === "detection") {
       console.log("[Offscreen] Running detection");
       predictions = await detect(
@@ -64720,14 +64712,6 @@ async function drawToCanvas() {
     console.error("[Offscreen] Prediction error:", error);
   }
   isPredicting = false;
-}
-function hashImageData(data) {
-  let hash = 0;
-  for (let i = 0; i < data.length; i++) {
-    hash = (hash << 5) - hash + data[i];
-    hash |= 0;
-  }
-  return hash;
 }
 /*! Bundled license information:
 

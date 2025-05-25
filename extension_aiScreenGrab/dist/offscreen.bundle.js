@@ -64591,8 +64591,8 @@ var targetTabId = null;
 var isPredicting = false;
 var modelLoaded = null;
 var modelDetails = null;
-var windowHeight = null;
-var windowWidth = null;
+var windowHeight = 720;
+var windowWidth = 1280;
 var layoutWidth = null;
 var layoutHeight = null;
 var lastFrameTime = performance.now();
@@ -64602,29 +64602,48 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
   if (message.target !== "offscreen") return;
   switch (message.type) {
     case "releaseStream":
-      stream = null;
+      if (stream) {
+        stream.getTracks().forEach((track) => track.stop());
+        stream = null;
+      }
       video.pause();
       video.srcObject = null;
+      sendframesstatus = false;
+      console.log("[Offscreen] Stream released");
       break;
     case "loadModel":
       modelDetails = await getItemFromDB("modelDetails");
+      if (!modelDetails) {
+        console.error("[Offscreen] Model details not found in DB. Cannot load model.");
+        modelLoaded = null;
+        return;
+      }
       console.log("[Offscreen] Loading model with details:", modelDetails);
       try {
-        modelLoaded = await loadModel();
+        modelLoaded = await loadModel(modelDetails.modelType);
         console.log("[Offscreen] Model loaded successfully");
       } catch (err) {
         console.error("[Offscreen] Failed to load model:", err);
+        modelLoaded = null;
       }
       break;
     case "start-frameCapture":
+      if (!modelLoaded) {
+        console.warn("[Offscreen] Model not loaded. Cannot start frame capture.");
+        return;
+      }
+      if (!stream) {
+        console.warn("[Offscreen] Stream not available. Cannot start frame capture.");
+        return;
+      }
       sendframesstatus = true;
       video.srcObject = stream;
-      await video.play();
+      await video.play().catch((e) => console.error("Error playing video:", e));
+      console.log("[Offscreen] Frame capture started.");
       break;
     case "stop-frameCapture":
       sendframesstatus = false;
-      video.pause();
-      video.srcObject = null;
+      console.log("[Offscreen] Frame capture stopped.");
       break;
     case "rectUpdate":
       rect = message.rect;
@@ -64632,47 +64651,61 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
       layoutHeight = message.layoutSize?.height;
       break;
     case "streamStart":
-      if (!stream) {
-        try {
-          stream = await navigator.mediaDevices.getUserMedia({
-            audio: false,
-            video: {
-              mandatory: {
-                chromeMediaSource: "tab",
-                chromeMediaSourceId: message.streamId,
-                minWidth: windowWidth,
-                minHeight: windowHeight,
-                height: windowHeight,
-                width: windowWidth,
-                maxWidth: windowWidth,
-                maxHeight: windowHeight
-              }
-            }
-          });
-          console.log("[Offscreen] minWidth:", windowWidth);
-          console.log("[Offscreen] minHeight:", windowHeight);
-        } catch (error) {
-          console.error("Error accessing media devices:", error);
-          return;
-        }
-      }
-      video.srcObject = stream;
-      video.play();
+      console.log("[Offscreen] streamStart received for tab:", message.targetTabId);
       targetTabId = message.targetTabId;
-      console.log("[Offscreen] Stream started for tab:", targetTabId);
+      if (stream) {
+        stream.getTracks().forEach((track) => track.stop());
+      }
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: {
+            mandatory: {
+              chromeMediaSource: "tab",
+              chromeMediaSourceId: message.streamId,
+              minWidth: windowWidth,
+              // Use captured window dimensions
+              minHeight: windowHeight,
+              maxWidth: windowWidth,
+              maxHeight: windowHeight
+            }
+          }
+        });
+        console.log("[Offscreen] New stream acquired for tab:", targetTabId);
+        video.srcObject = stream;
+        await video.play().catch((e) => console.error("Error playing video:", e));
+      } catch (error) {
+        console.error("[Offscreen] Error accessing media devices for streamStart:", error);
+        stream = null;
+        return;
+      }
       break;
     case "windowResize":
       windowHeight = message.windowHeight;
       windowWidth = message.windowWidth;
-      console.log("[Offscreen] Window resized:", windowHeight, windowWidth);
+      if (video.srcObject === stream && stream) {
+        video.width = video.videoWidth > 0 ? video.videoWidth : windowWidth;
+        video.height = video.videoHeight > 0 ? video.videoHeight : windowHeight;
+      }
+      console.log("[Offscreen] Window resized from content script:", windowHeight, windowWidth);
       break;
   }
 });
 var frameInterval = null;
+video.addEventListener("loadedmetadata", () => {
+  video.width = video.videoWidth;
+  video.height = video.videoHeight;
+  console.log(`[Offscreen] Video metadata loaded: ${video.videoWidth}x${video.videoHeight}`);
+});
 video.addEventListener("play", () => {
-  video.width = windowWidth;
-  video.height = windowHeight;
-  console.log("Video playing");
+  if (video.videoWidth && video.videoHeight) {
+    video.width = video.videoWidth;
+    video.height = video.videoHeight;
+  } else {
+    video.width = windowWidth;
+    video.height = windowHeight;
+  }
+  console.log("[Offscreen] Video playing, dimensions:", video.width, "x", video.height);
   if (!frameInterval) {
     frameInterval = setInterval(drawToCanvas, 1e3 / 30);
   }
@@ -64681,61 +64714,74 @@ video.addEventListener("pause", () => {
   if (frameInterval) {
     clearInterval(frameInterval);
     frameInterval = null;
+    console.log("[Offscreen] Video paused, frame interval cleared.");
   }
 });
 async function drawToCanvas() {
-  if (!sendframesstatus || isPredicting || !modelLoaded || !layoutWidth || !layoutHeight) return;
+  if (!sendframesstatus || isPredicting || !modelLoaded || !layoutWidth || !layoutHeight || !video.srcObject || video.paused || video.ended || video.videoWidth === 0) {
+    return;
+  }
   const now2 = performance.now();
-  fps = Math.round(1e3 / (now2 - lastFrameTime));
+  const delta = now2 - lastFrameTime;
+  if (delta > 0) {
+    fps = Math.round(1e3 / delta);
+  }
   lastFrameTime = now2;
   isPredicting = true;
+  const vw = video.videoWidth;
+  const vh = video.videoHeight;
   const xRatio = rect.x / layoutWidth;
   const yRatio = rect.y / layoutHeight;
   const widthRatio = rect.width / layoutWidth;
   const heightRatio = rect.height / layoutHeight;
-  const sx = xRatio * video.videoWidth;
-  const sy = yRatio * video.videoHeight;
-  const sw = widthRatio * video.videoWidth;
-  const sh = heightRatio * video.videoHeight;
+  const sx = xRatio * vw;
+  const sy = yRatio * vh;
+  const sw = widthRatio * vw;
+  const sh = heightRatio * vh;
   if (sw <= 0 || sh <= 0) {
-    console.warn("[Offscreen] Skipping due to zero size", sw, sh);
     isPredicting = false;
     return;
   }
-  offscreenCanvas.width = sw;
-  offscreenCanvas.height = sh;
-  ctx.clearRect(0, 0, sw, sh);
-  ctx.drawImage(video, sx, sy, sw, sh, 0, 0, sw, sh);
-  const imageData = ctx.getImageData(0, 0, sw, sh);
+  offscreenCanvas.width = Math.max(1, Math.floor(sw));
+  offscreenCanvas.height = Math.max(1, Math.floor(sh));
+  try {
+    ctx.clearRect(0, 0, offscreenCanvas.width, offscreenCanvas.height);
+    ctx.drawImage(video, sx, sy, sw, sh, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
+  } catch (e) {
+    console.error("[Offscreen] Error drawing video to canvas:", e, { sx, sy, sw, sh, vw, vh, cw: offscreenCanvas.width, ch: offscreenCanvas.height });
+    isPredicting = false;
+    return;
+  }
+  const imageData = ctx.getImageData(0, 0, offscreenCanvas.width, offscreenCanvas.height);
   try {
     let predictions;
     if (modelDetails.inferenceTask === "detection") {
-      console.log("[Offscreen] Running detection");
-      predictions = await detect(
-        modelLoaded,
-        imageData,
-        modelDetails
-      );
+      predictions = await detect(modelLoaded, imageData, modelDetails);
     } else {
       predictions = await predict(modelLoaded, imageData, modelDetails.inputShape, 5);
     }
-    chrome.runtime.sendMessage({
-      type: "predictions",
-      predictions,
-      imageData: {
-        data: Array.from(imageData.data),
-        width: imageData.width,
-        height: imageData.height
-      },
-      target: "worker",
-      targetTabId,
-      fps
-    });
+    if (targetTabId) {
+      chrome.runtime.sendMessage({
+        type: "predictions",
+        predictions,
+        imageData: {
+          // Sending raw data can be slow, consider alternatives if perf is an issue
+          data: Array.from(imageData.data),
+          width: imageData.width,
+          height: imageData.height
+        },
+        target: "worker",
+        // Send to service worker to relay
+        targetTabId,
+        fps
+      });
+    }
   } catch (error) {
     console.error("[Offscreen] Prediction error:", error);
   }
   isPredicting = false;
 }
+console.log("[Offscreen] Script fully parsed and event listeners ready.");
 /*! Bundled license information:
 
 @tensorflow/tfjs-core/dist/backends/backend.js:

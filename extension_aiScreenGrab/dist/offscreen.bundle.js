@@ -64484,12 +64484,35 @@ async function predict(model2, imageData, inputShape, topK3 = 5) {
     return [];
   }
   const [inH, inW] = inputShape.split("x").map(Number);
-  const logits = tidy(() => {
-    const tensor2 = browser_exports.fromPixels(imageData).resizeBilinear([inH, inW]).toFloat().div(255).reshape([1, inH, inW, 3]);
-    return model2.predict(tensor2);
+  const probabilityTensor = tidy(() => {
+    const imgTensor = browser_exports.fromPixels(imageData).resizeBilinear([inH, inW]).toFloat();
+    const normalizedTensor = imgTensor.div(255);
+    const reshapedTensor = normalizedTensor.reshape([1, inH, inW, 3]);
+    const logits = model2.predict(reshapedTensor);
+    let probabilities;
+    if (Array.isArray(logits)) {
+      probabilities = softmax(logits[0]);
+    } else if (typeof logits === "object" && logits.rank === void 0 && Object.keys(logits).length > 0) {
+      const outputLayerName = Object.keys(logits).find((key) => logits[key] && logits[key].rank !== void 0);
+      if (outputLayerName) {
+        probabilities = softmax(logits[outputLayerName]);
+      } else {
+        console.error("[Predict] Could not find a valid tensor in GraphModel output:", logits);
+        return tensor([]);
+      }
+    } else if (logits.rank !== void 0) {
+      probabilities = softmax(logits);
+    } else {
+      console.error("[Predict] Unexpected model output structure:", logits);
+      return tensor([]);
+    }
+    return probabilities;
   });
-  const data = await logits.data();
-  logits.dispose();
+  const data = await probabilityTensor.data();
+  probabilityTensor.dispose();
+  if (data.length === 0) {
+    return [];
+  }
   const results = Array.from(data).map((prob, i) => ({
     label: labels[i] ?? `Class ${i}`,
     probability: prob

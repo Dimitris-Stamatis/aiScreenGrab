@@ -30,17 +30,17 @@ export async function loadModel() {
 
 /**
  * Run classification inference and return Top-K label probabilities.
- * @param {tf.LayersModel|tf.GraphModel} model 
- * @param {ImageData|HTMLImageElement|HTMLCanvasElement} imageData 
- * @param {string} inputShape as "HxW" (e.g. "224x224")
- * @param {number} topK how many results to return
+ * @param {tf.LayersModel|tf.GraphModel} model The TensorFlow.js model.
+ * @param {ImageData|HTMLImageElement|HTMLCanvasElement} imageData The input image.
+ * @param {string} inputShape Input shape as "HxW" (e.g., "224x224").
+ * @param {string[]} labels Array of class labels, indexed by the model's output.
+ * @param {number} [topK=5] How many top results to return.
  */
 export async function predict(model, imageData, inputShape, topK = 5) {
     if (!model) {
         console.error("[Predict] Model not loaded.");
         return [];
     }
-
     if (!inputShape || !/^\d+x\d+$/.test(inputShape)) {
         console.error("[Predict] Invalid input shape. Expected 'HxW'.");
         return [];
@@ -48,21 +48,55 @@ export async function predict(model, imageData, inputShape, topK = 5) {
 
     const [inH, inW] = inputShape.split("x").map(Number);
 
-    const logits = tf.tidy(() => {
-        const tensor = tf.browser
+    const probabilityTensor = tf.tidy(() => {
+        const imgTensor = tf.browser
             .fromPixels(imageData)
             .resizeBilinear([inH, inW])
-            .toFloat()
-            .div(255)
-            .reshape([1, inH, inW, 3]);
+            .toFloat();
 
-        return model.predict(tensor);
+        // Normalize the image tensor. Common is 0-1 (div 255.0).
+        // IMPORTANT: This MUST match your model's training preprocessing.
+        // Some models expect -1 to 1 (e.g., `imgTensor.sub(127.5).div(127.5)`).
+        const normalizedTensor = imgTensor.div(255.0);
+
+        const reshapedTensor = normalizedTensor.reshape([1, inH, inW, 3]);
+
+        // Get model predictions (logits)
+        const logits = model.predict(reshapedTensor);
+
+        // Apply Softmax to convert logits to probabilities.
+        // This is necessary if the model's last layer isn't already softmax.
+        let probabilities;
+        if (Array.isArray(logits)) {
+            // Handle models with multiple output tensors (use the first for classification)
+            probabilities = tf.softmax(logits[0]);
+        } else if (typeof logits === 'object' && logits.rank === undefined && Object.keys(logits).length > 0) {
+            // Handle GraphModel named outputs (e.g., { "output_name": tensor })
+            // Assumes the first output tensor found is the classification output.
+            const outputLayerName = Object.keys(logits).find(key => logits[key] && logits[key].rank !== undefined);
+            if (outputLayerName) {
+                probabilities = tf.softmax(logits[outputLayerName]);
+            } else {
+                console.error("[Predict] Could not find a valid tensor in GraphModel output:", logits);
+                return tf.tensor([]); // Return empty to prevent further errors
+            }
+        } else if (logits.rank !== undefined) {
+            // Standard case: logits is a single Tensor
+            probabilities = tf.softmax(logits);
+        } else {
+             console.error("[Predict] Unexpected model output structure:", logits);
+             return tf.tensor([]);
+        }
+        return probabilities;
     });
 
-    const data = await logits.data();
-    logits.dispose();
+    const data = await probabilityTensor.data();
+    probabilityTensor.dispose();
 
-    // build and sort results
+    if (data.length === 0) {
+        return []; // Softmax or model output handling failed
+    }
+
     const results = Array.from(data).map((prob, i) => ({
         label: labels[i] ?? `Class ${i}`,
         probability: prob,

@@ -64588,7 +64588,7 @@ var stream = null;
 var rect = { x: 0, y: 0, width: 0, height: 0 };
 var sendframesstatus = false;
 var targetTabId = null;
-var isPredicting = false;
+var isPredictingLock = false;
 var modelLoaded = null;
 var modelDetails = null;
 var windowHeight = 720;
@@ -64597,6 +64597,7 @@ var layoutWidth = null;
 var layoutHeight = null;
 var lastFrameTime = performance.now();
 var fps = 0;
+var frameInterval = null;
 chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
   console.log("[Offscreen] Message received:", message);
   if (message.target !== "offscreen") return;
@@ -64612,19 +64613,47 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
       console.log("[Offscreen] Stream released");
       break;
     case "loadModel":
-      modelDetails = await getItemFromDB("modelDetails");
-      if (!modelDetails) {
-        console.error("[Offscreen] Model details not found in DB. Cannot load model.");
+      if (!message.modelDetails) {
+        console.error("[Offscreen] Model details not provided in 'loadModel' message.");
         modelLoaded = null;
         return;
       }
+      modelDetails = message.modelDetails;
       console.log("[Offscreen] Loading model with details:", modelDetails);
       try {
+        const modelLoadStartTime = performance.now();
         modelLoaded = await loadModel(modelDetails.modelType);
-        console.log("[Offscreen] Model loaded successfully");
+        const modelLoadEndTime = performance.now();
+        if (modelLoaded) {
+          console.log("[Offscreen] Model loaded successfully");
+          chrome.runtime.sendMessage({
+            target: "worker",
+            type: "recordPerformanceMetric",
+            metric: {
+              timestamp: Date.now(),
+              type: "modelLoad",
+              location: "offscreen",
+              durationMs: parseFloat((modelLoadEndTime - modelLoadStartTime).toFixed(2)),
+              modelType: modelDetails.inferenceTask || "unknown"
+            }
+          });
+        } else {
+          console.error("[Offscreen] Model loading returned null/undefined.");
+        }
       } catch (err) {
         console.error("[Offscreen] Failed to load model:", err);
         modelLoaded = null;
+        chrome.runtime.sendMessage({
+          target: "worker",
+          type: "recordPerformanceMetric",
+          metric: {
+            timestamp: Date.now(),
+            type: "modelLoadError",
+            location: "offscreen",
+            modelType: modelDetails?.inferenceTask || "unknown",
+            error: err.message
+          }
+        });
       }
       break;
     case "start-frameCapture":
@@ -64637,13 +64666,22 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
         return;
       }
       sendframesstatus = true;
-      video.srcObject = stream;
-      await video.play().catch((e) => console.error("Error playing video:", e));
+      if (video.srcObject !== stream) video.srcObject = stream;
+      if (video.paused) {
+        await video.play().catch((e) => console.error("Error playing video for frame capture:", e));
+      }
       console.log("[Offscreen] Frame capture started.");
+      if (!frameInterval && video.readyState >= video.HAVE_METADATA && !video.paused) {
+        frameInterval = setInterval(drawToCanvas, 1e3 / 30);
+      }
       break;
     case "stop-frameCapture":
       sendframesstatus = false;
       console.log("[Offscreen] Frame capture stopped.");
+      if (frameInterval) {
+        clearInterval(frameInterval);
+        frameInterval = null;
+      }
       break;
     case "rectUpdate":
       rect = message.rect;
@@ -64664,7 +64702,6 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
               chromeMediaSource: "tab",
               chromeMediaSourceId: message.streamId,
               minWidth: windowWidth,
-              // Use captured window dimensions
               minHeight: windowHeight,
               maxWidth: windowWidth,
               maxHeight: windowHeight
@@ -64673,41 +64710,37 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
         });
         console.log("[Offscreen] New stream acquired for tab:", targetTabId);
         video.srcObject = stream;
-        await video.play().catch((e) => console.error("Error playing video:", e));
       } catch (error) {
         console.error("[Offscreen] Error accessing media devices for streamStart:", error);
         stream = null;
-        return;
       }
       break;
     case "windowResize":
-      windowHeight = message.windowHeight;
       windowWidth = message.windowWidth;
-      if (video.srcObject === stream && stream) {
-        video.width = video.videoWidth > 0 ? video.videoWidth : windowWidth;
-        video.height = video.videoHeight > 0 ? video.videoHeight : windowHeight;
-      }
-      console.log("[Offscreen] Window resized from content script:", windowHeight, windowWidth);
+      windowHeight = message.windowHeight;
+      console.log("[Offscreen] Window resized hint from content script:", windowHeight, windowWidth);
       break;
   }
+  return true;
 });
-var frameInterval = null;
 video.addEventListener("loadedmetadata", () => {
   video.width = video.videoWidth;
   video.height = video.videoHeight;
   console.log(`[Offscreen] Video metadata loaded: ${video.videoWidth}x${video.videoHeight}`);
+  if (sendframesstatus && !frameInterval && !video.paused) {
+    console.log("[Offscreen] Starting frame interval after loadedmetadata.");
+    frameInterval = setInterval(drawToCanvas, 1e3 / 30);
+  }
 });
 video.addEventListener("play", () => {
   if (video.videoWidth && video.videoHeight) {
     video.width = video.videoWidth;
     video.height = video.videoHeight;
-  } else {
-    video.width = windowWidth;
-    video.height = windowHeight;
   }
   console.log("[Offscreen] Video playing, dimensions:", video.width, "x", video.height);
-  if (!frameInterval) {
+  if (sendframesstatus && !frameInterval) {
     frameInterval = setInterval(drawToCanvas, 1e3 / 30);
+    console.log("[Offscreen] Frame interval started on video play.");
   }
 });
 video.addEventListener("pause", () => {
@@ -64718,16 +64751,17 @@ video.addEventListener("pause", () => {
   }
 });
 async function drawToCanvas() {
-  if (!sendframesstatus || isPredicting || !modelLoaded || !layoutWidth || !layoutHeight || !video.srcObject || video.paused || video.ended || video.videoWidth === 0) {
+  if (!sendframesstatus || isPredictingLock || !modelLoaded || !layoutWidth || !layoutHeight || !video.srcObject || video.paused || video.ended || video.videoWidth === 0 || !modelDetails) {
     return;
   }
+  isPredictingLock = true;
+  const frameProcessStartTime = performance.now();
   const now2 = performance.now();
   const delta = now2 - lastFrameTime;
   if (delta > 0) {
     fps = Math.round(1e3 / delta);
   }
   lastFrameTime = now2;
-  isPredicting = true;
   const vw = video.videoWidth;
   const vh = video.videoHeight;
   const xRatio = rect.x / layoutWidth;
@@ -64739,7 +64773,7 @@ async function drawToCanvas() {
   const sw = widthRatio * vw;
   const sh = heightRatio * vh;
   if (sw <= 0 || sh <= 0) {
-    isPredicting = false;
+    isPredictingLock = false;
     return;
   }
   offscreenCanvas.width = Math.max(1, Math.floor(sw));
@@ -64749,37 +64783,71 @@ async function drawToCanvas() {
     ctx.drawImage(video, sx, sy, sw, sh, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
   } catch (e) {
     console.error("[Offscreen] Error drawing video to canvas:", e, { sx, sy, sw, sh, vw, vh, cw: offscreenCanvas.width, ch: offscreenCanvas.height });
-    isPredicting = false;
+    isPredictingLock = false;
     return;
   }
   const imageData = ctx.getImageData(0, 0, offscreenCanvas.width, offscreenCanvas.height);
+  let predictions;
+  const inferenceStartTime = performance.now();
   try {
-    let predictions;
     if (modelDetails.inferenceTask === "detection") {
       predictions = await detect(modelLoaded, imageData, modelDetails);
     } else {
       predictions = await predict(modelLoaded, imageData, modelDetails.inputShape, 5);
     }
+    const inferenceEndTime = performance.now();
+    const inferenceDurationMs = parseFloat((inferenceEndTime - inferenceStartTime).toFixed(2));
+    const totalFrameProcessingMs = parseFloat((inferenceEndTime - frameProcessStartTime).toFixed(2));
     if (targetTabId) {
+      chrome.runtime.sendMessage({
+        target: "worker",
+        type: "recordPerformanceMetric",
+        metric: {
+          timestamp: Date.now(),
+          type: "inference",
+          location: "offscreen",
+          durationMs: inferenceDurationMs,
+          totalFrameProcessingMs,
+          fps,
+          modelType: modelDetails.inferenceTask,
+          inputWidth: offscreenCanvas.width,
+          inputHeight: offscreenCanvas.height
+        }
+      });
       chrome.runtime.sendMessage({
         type: "predictions",
         predictions,
         imageData: {
-          // Sending raw data can be slow, consider alternatives if perf is an issue
           data: Array.from(imageData.data),
           width: imageData.width,
           height: imageData.height
         },
         target: "worker",
-        // Send to service worker to relay
         targetTabId,
         fps
       });
     }
   } catch (error) {
+    const inferenceEndTime = performance.now();
     console.error("[Offscreen] Prediction error:", error);
+    chrome.runtime.sendMessage({
+      target: "worker",
+      type: "recordPerformanceMetric",
+      metric: {
+        timestamp: Date.now(),
+        type: "inferenceError",
+        location: "offscreen",
+        durationMs: parseFloat((inferenceEndTime - inferenceStartTime).toFixed(2)),
+        modelType: modelDetails.inferenceTask,
+        inputWidth: offscreenCanvas.width,
+        inputHeight: offscreenCanvas.height,
+        error: error.message,
+        fps
+      }
+    });
+  } finally {
+    isPredictingLock = false;
   }
-  isPredicting = false;
 }
 console.log("[Offscreen] Script fully parsed and event listeners ready.");
 /*! Bundled license information:

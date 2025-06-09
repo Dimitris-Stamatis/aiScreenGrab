@@ -1,502 +1,688 @@
+// injected.js
+// This script combines the logic of the original injected script, the popup, and the offscreen document.
+
+import * as tf from "@tensorflow/tfjs";
+import { loadModel, predict, detect } from "./utils/modelHelpers.mjs";
+import { setItemInDB, getItemFromDB, saveFile } from "./utils/indexedDB.mjs";
+
 (async () => {
+  // Avoid re-injecting if the UI already exists.
+  if (document.getElementById('__extension_aiScreen')) {
+    console.log("AI Screen UI already present. Aborting injection.");
+    return;
+  }
+
   // --- Global State ---
   const AppState = {
-    aspectRatio: localStorage.getItem('aspectRatio') || '1x1',
-    rect: JSON.parse(localStorage.getItem('rectState')) || null,
-    isPredicting: localStorage.getItem('isPredicting') === 'true',
+    model: null,
+    modelDetails: null,
+    stream: null,
+    videoElement: document.createElement('video'),
+    isPredicting: false,
+    isDrawing: false,
     mainRect: null,
-    resizeTimeout: null,
+    inferenceLoopId: null,
+    performanceLog: [],
+    offscreenCanvas: new OffscreenCanvas(1, 1),
+    saveLogTimeout: null,
   };
 
-  // --- UI Elements (will be populated by _initUI) ---
-  let UI = {}; // Initialize as an empty object
+  // --- UI Element References ---
+  const UI = {};
 
-  // --- Initial Setup ---
-  _initUIAndState(); // New function to handle initial setup
-
-  // --- Event Listeners ---
-  _setupUIEventListeners();
-  _setupChromeMessageListener();
-  _setupWindowResizeListener();
-
-  // --- Helpers ---
-
-  function _getHTML() { // Moved _getHTML up as it's needed by _initUI
-    return `
-      <div id="__extension_aiScreen">
-        <div class="__extension_aiScreen-modelUI" data-dragable="true">
-          <button class="__extension_aiScreen-predict" data-for="start">Start predictions</button>
-          <button class="__extension_aiScreen-drawArea">Draw Area</button>
-          <button class="__extension_aiScreen-configureModel">Configure Model</button>
-          <div class="__extension_aiScreen-results"></div>
-        </div>
-        <div class="__extension_aiScreen-overlayElements">
-          <div class="__extension_aiScreen-overlay"></div>
-          <div class="__extension_aiScreen-rect" data-dragable="true"></div>
-          <div class="__extension_aiScreen-canvasContainer" data-dragable="true">
-            <div class="__extension_aiScreen-fps"></div>
-            <canvas class="__extension_aiScreen-canvas"></canvas>
-          </div>
-        </div>
-      </div>
-    `;
+  // --- Main Initializer ---
+  function _init() {
+    console.log("DEBUG: _init() - Initializing AI In-Page Extension...");
+    _injectUI();
+    _queryUIElements();
+    _bindEventListeners();
+    _loadInitialState();
+    _checkForExistingModel();
   }
 
-  function _createDragIcon(src) { // Moved _createDragIcon up as it's needed by _initUI
-    const img = document.createElement('img');
-    img.src = src;
-    img.alt = 'Drag';
-    img.className = '__extension_aiScreen-dragIcon';
-    return img;
+  // --- UI and HTML Injection ---
+  function _getHTML() {
+        return `
+        <div id="__extension_aiScreen">
+            <div class="__extension_aiScreen-modelUI" data-dragable="true">
+                <h3>AI Controls</h3>
+                <button class="__extension_aiScreen-predict" data-for="start">Start Predictions</button>
+                <button class="__extension_aiScreen-drawArea">Draw Area</button>
+                <button class="__extension_aiScreen-showConfig">Configure Model</button>
+                <div class="__extension_aiScreen-results"></div>
+            </div>
+
+            <div class="__extension_aiScreen-overlayElements">
+                <div class="__extension_aiScreen-overlay"></div>
+                <div class="__extension_aiScreen-rect" data-dragable="true"></div>
+                <div class="__extension_aiScreen-canvasContainer" data-dragable="true">
+                    <div class="__extension_aiScreen-fps"></div>
+                    <canvas class="__extension_aiScreen-canvas"></canvas>
+                </div>
+            </div>
+
+            <div id="__extension_aiConfigPanel" class="hidden">
+                <div class="config-content">
+                    <button id="configCloseButton">×</button>
+                    <h1>AI Model Configuration</h1>
+                    <form id="modelDetailsForm">
+                        <fieldset>
+                            <legend>1. Upload Model</legend>
+                            <label>Model files (.json, .bin, .txt)
+                                <input type="file" id="modelFiles" name="modelFiles" multiple />
+                            </label>
+                            <ul id="modelFilesList"></ul>
+                        </fieldset>
+                        <fieldset>
+                            <legend>2. Configuration</legend>
+                            <label>Inference task
+                                <select id="inferenceTask" name="inferenceTask">
+                                    <option value="classification">Classification</option>
+                                    <option value="detection">Detection</option>
+                                </select>
+                            </label>
+                            <label>Labels format
+                                <select id="labelsFormat" name="labelsFormat">
+                                    <option value="simpletext">Line by line text</option>
+                                    <option value="simpletextwithindex">Text with indexes</option>
+                                    <option value="json">JSON</option>
+                                </select>
+                            </label>
+                            <label>Labels Separator
+                                <input type="text" id="labelsSeparator" name="labelsSeparator" value=" "/>
+                            </label>
+                        </fieldset>
+                        <fieldset>
+                            <legend>3. Input</legend>
+                            <label>Input shape (Height x Width)
+                                <input type="text" id="inputShape" name="inputShape" placeholder="e.g. 224x224" required />
+                            </label>
+                        </fieldset>
+                        <fieldset id="detectionOptions" class="hidden">
+                            <legend>4. Detection Settings</legend>
+                            <label>Score threshold
+                                <input type="number" id="scoreThreshold" name="scoreThreshold" min="0" max="1" step="0.01" value="0.5" />
+                            </label>
+                            <label>Max detections
+                                <input type="number" id="maxDetections" name="maxDetections" min="1" step="1" value="20" />
+                            </label>
+                        </fieldset>
+                        <button type="submit" id="saveConfigBtn">Save Configuration</button>
+                    </form>
+                    <fieldset>
+                        <legend>Performance Data</legend>
+                        <button type="button" id="exportPerformanceButton">Export CSV</button>
+                        <button type="button" id="clearPerformanceButton">Clear Data</button>
+                    </fieldset>
+                </div>
+            </div>
+        </div>`;
   }
 
-  function _initUIAndState() {
-    // 1. Inject HTML first
-    // Check if UI already exists to prevent multiple injections on re-injection
-    if (document.getElementById('__extension_aiScreen')) {
-        console.log("AI Screen UI already exists. Skipping HTML injection.");
-    } else {
-        document.body.insertAdjacentHTML('beforeend', _getHTML());
-    }
-
-    // 2. Now that HTML is in the DOM, select the elements
-    UI = {
-      container: document.getElementById('__extension_aiScreen'),
-      redrawButton: document.querySelector('.__extension_aiScreen-drawArea'),
-      overlay: document.querySelector('.__extension_aiScreen-overlay'),
-      rect: document.querySelector('.__extension_aiScreen-rect'),
-      canvas: document.querySelector('.__extension_aiScreen-canvas'),
-      modelUI: document.querySelector('.__extension_aiScreen-modelUI'),
-      predictButton: document.querySelector('.__extension_aiScreen-predict'),
-      configureModel: document.querySelector('.__extension_aiScreen-configureModel'),
-      results: document.querySelector('.__extension_aiScreen-results'),
-      draggers: document.querySelectorAll('.__extension_aiScreen-dragIcon'), // Will be empty until icons added
-      fps: document.querySelector('.__extension_aiScreen-fps'),
-    };
-
-    // 3. Add drag icons (now that UI elements are selected)
+  function _injectUI() {
+    document.body.insertAdjacentHTML('beforeend', _getHTML());
     const dragIconURL = chrome.runtime.getURL('icons/drag.svg');
-    // Ensure UI.modelUI and UI.rect are valid before trying to append children
-    // This needs to target elements marked as data-dragable AFTER they are in UI object
     document.querySelectorAll('[data-dragable="true"]').forEach(el => {
-        // Check if icon already exists for this element to prevent duplicates on re-injection
-        if (!el.querySelector('.__extension_aiScreen-dragIcon')) {
-            el.appendChild(_createDragIcon(dragIconURL));
-        }
-    });
-    // Re-query for draggers after adding them
-    UI.draggers = document.querySelectorAll('.__extension_aiScreen-dragIcon');
-
-
-    // 4. Restore previous state
-    _restoreRect();
-    _updatePredictButton(AppState.isPredicting);
-  }
-
-
-  function _restoreRect() {
-    if (!AppState.rect || !UI.rect) return; // Check if UI.rect exists
-    Object.assign(UI.rect.style, {
-      left: `${AppState.rect.x}px`,
-      top: `${AppState.rect.y}px`,
-      width: `${AppState.rect.width}px`,
-      height: `${AppState.rect.height}px`,
-    });
-    UI.rect.classList.add('active');
-    AppState.mainRect = { ...AppState.rect };
-  }
-
-  function _updatePredictButton(isPredicting) {
-    if (!UI.predictButton) return; // Check if UI.predictButton exists
-    if (isPredicting) {
-      UI.predictButton.dataset.for = 'stop';
-      UI.predictButton.textContent = 'Stop predictions';
-    } else {
-      UI.predictButton.dataset.for = 'start';
-      UI.predictButton.textContent = 'Start predictions';
-    }
-  }
-
-  function _setupUIEventListeners() {
-    // Ensure UI elements exist before adding listeners
-    // This is important if the script is re-injected and _initUIAndState might not have fully run
-    // or if an error occurred during its execution.
-    if (!UI.container) {
-        console.warn("UI container not found, cannot setup UI event listeners.");
-        return;
-    }
-
-    UI.redrawButton?.addEventListener('click', () => _startDrawing(AppState.aspectRatio));
-    UI.configureModel?.addEventListener('click', () =>
-      chrome.runtime.sendMessage({ target: 'worker', type: 'configureModel' })
-    );
-    UI.predictButton?.addEventListener('click', _togglePredictMode);
-    UI.draggers?.forEach(dragger => dragger.addEventListener('mousedown', _onDragStart));
-  }
-
-  function _setupChromeMessageListener() {
-    chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
-      console.log('[Injected] Message received:', message);
-      if (message.type === 'startDrawing') {
-        // If UI is not fully initialized (e.g. on first load after config), ensure it is
-        if (!UI.container || !document.getElementById('__extension_aiScreen')) {
-            console.log("[Injected] UI not ready for startDrawing, re-initializing.");
-            _initUIAndState(); // Re-initialize if needed
-            // Might need a small delay for DOM updates after _initUIAndState if it injects HTML
-            await new Promise(resolve => setTimeout(resolve, 50));
-        }
-        _startDrawing(message.aspectRatio);
-      } else if (message.type === 'predictions') {
-        _handlePredictions(message);
-      } else if (message.type === 'reinjected') {
-        console.log("[Injected] 'reinjected' message received. Ensuring UI is up.");
-        // UI might have been cleared or tab reloaded. Re-initialize.
-        _initUIAndState();
-        // After re-init, ensure event listeners are also re-attached if they were lost
-        _setupUIEventListeners();
-        _enableUIElements(); // Ensure UI is visible
-         // If aspect ratio is sent with reinjected message, apply it
-        if (message.aspectRatio) {
-            AppState.aspectRatio = message.aspectRatio;
-            localStorage.setItem('aspectRatio', AppState.aspectRatio);
-        }
+      if (!el.querySelector('.__extension_aiScreen-dragIcon')) {
+        const img = document.createElement('img');
+        img.src = dragIconURL;
+        img.className = '__extension_aiScreen-dragIcon';
+        el.appendChild(img);
       }
-      return true; // Keep channel open for async response if any
     });
   }
 
-  function _setupWindowResizeListener() {
-    window.addEventListener('resize', () => {
-      clearTimeout(AppState.resizeTimeout);
-      AppState.resizeTimeout = setTimeout(_sendWindowSizeToOffscreen, 200);
+  function _queryUIElements() {
+    const sel = (selector) => document.querySelector(selector);
+    Object.assign(UI, {
+      container: sel('#__extension_aiScreen'),
+      predictButton: sel('.__extension_aiScreen-predict'),
+      drawAreaButton: sel('.__extension_aiScreen-drawArea'),
+      showConfigButton: sel('.__extension_aiScreen-showConfig'),
+      results: sel('.__extension_aiScreen-results'),
+      overlay: sel('.__extension_aiScreen-overlay'),
+      rect: sel('.__extension_aiScreen-rect'),
+      canvasContainer: sel('.__extension_aiScreen-canvasContainer'),
+      canvas: sel('.__extension_aiScreen-canvas'),
+      fps: sel('.__extension_aiScreen-fps'),
+      configPanel: sel('#__extension_aiConfigPanel'),
+      configForm: sel('#modelDetailsForm'),
+      configCloseButton: sel('#configCloseButton'),
+      saveConfigBtn: sel('#saveConfigBtn'),
+      modelFilesInput: sel('#modelFiles'),
+      modelFilesList: sel('#modelFilesList'),
+      inferenceTask: sel('#inferenceTask'),
+      detectionOptions: sel('#detectionOptions'),
+      draggers: document.querySelectorAll('.__extension_aiScreen-dragIcon'),
+      exportPerfButton: sel('#exportPerformanceButton'),
+      clearPerfButton: sel('#clearPerformanceButton'),
     });
-    _sendWindowSizeToOffscreen(); // Initial send
   }
 
-  function _enableUIElements() {
-    if (!UI.overlay || !UI.rect || !UI.modelUI || !UI.canvas || !UI.results || !UI.fps) {
-        console.warn("[Injected] Some UI elements missing, cannot fully enable UI.");
-        return;
+  async function _loadInitialState() {
+    const savedRect = JSON.parse(localStorage.getItem('rectState'));
+    if (savedRect) {
+      AppState.mainRect = savedRect;
+      _updateRectUI(savedRect.x, savedRect.y, savedRect.width, savedRect.height);
+      UI.rect.classList.add('active');
     }
-    UI.overlay.classList.remove('active');
-    UI.rect.classList.add('active');
-    UI.modelUI.classList.add('active');
-    UI.canvas.classList.add('active');
-    UI.results.classList.add('active');
-    UI.fps.classList.add('active');
+    AppState.performanceLog = (await chrome.storage.local.get('performanceLog'))?.performanceLog || [];
   }
 
-  // --- UI Logic ---
-  function _startDrawing(aspectRatio = null) {
-    // Ensure UI is ready
-    if (!UI.rect || !UI.overlay) {
-        console.warn("[Injected] Drawing UI not ready, attempting re-initialization for _startDrawing.");
-        _initUIAndState(); // Try to re-initialize
-         // If UI is still not ready after re-init, bail.
-        if (!UI.rect || !UI.overlay) {
-            console.error("[Injected] Cannot start drawing, UI elements (rect/overlay) missing after re-init.");
+  function _bindEventListeners() {
+    UI.predictButton.addEventListener('click', _togglePredictMode);
+    UI.drawAreaButton.addEventListener('click', () => _startDrawing());
+    UI.showConfigButton.addEventListener('click', () => _toggleConfigPanel(true));
+    UI.configCloseButton.addEventListener('click', () => _toggleConfigPanel(false));
+    UI.configForm.addEventListener('submit', _handleConfigFormSubmit);
+    UI.inferenceTask.addEventListener("change", () => {
+      UI.detectionOptions.classList.toggle('hidden', UI.inferenceTask.value !== "detection");
+    });
+    UI.draggers.forEach(dragger => dragger.addEventListener('mousedown', _onDragStart));
+    UI.exportPerfButton.addEventListener('click', _exportPerformanceData);
+    UI.clearPerfButton.addEventListener('click', _clearPerformanceData);
+  }
+
+  // --- Function to manage button states ---
+  function _updateControlState(enabled, reason = '') {
+    UI.predictButton.disabled = !enabled;
+    UI.drawAreaButton.disabled = !enabled;
+    UI.predictButton.title = enabled ? '' : reason;
+    UI.drawAreaButton.title = enabled ? '' : reason;
+  }
+
+  // --- Configuration Logic ---
+  async function _checkForExistingModel() {
+    _updateControlState(false, "Initializing...");
+    AppState.modelDetails = await getItemFromDB("modelDetails");
+    if (AppState.modelDetails) {
+      console.log("Found existing model configuration. Loading...");
+      _populateConfigForm();
+      await _loadModelFromConfig();
+    } else {
+      console.log("No model configuration found. Please configure a model.");
+      _updateControlState(false, "Model is not configured.");
+      _toggleConfigPanel(true);
+    }
+  }
+
+  function _populateConfigForm() {
+    if (!AppState.modelDetails) return;
+    const form = UI.configForm;
+    form.querySelector('#inputShape').value = AppState.modelDetails.inputShape || "224x224";
+    form.querySelector('#inferenceTask').value = AppState.modelDetails.inferenceTask || 'classification';
+    form.querySelector('#labelsFormat').value = AppState.modelDetails.labelsFormat || 'simpletext';
+    form.querySelector('#labelsSeparator').value = AppState.modelDetails.labelsSeparator || ' ';
+    if (AppState.modelDetails.inferenceTask === "detection") {
+      form.querySelector('#scoreThreshold').value = AppState.modelDetails.scoreThreshold ?? 0.5;
+      form.querySelector('#maxDetections').value = AppState.modelDetails.maxDetections ?? 20;
+    }
+    UI.detectionOptions.classList.toggle('hidden', AppState.modelDetails.inferenceTask !== 'detection');
+    UI.modelFilesList.innerHTML = (AppState.modelDetails.modelFiles || []).map(name => `<li>${name}</li>`).join('');
+  }
+
+  async function _handleConfigFormSubmit(e) {
+    e.preventDefault();
+    UI.saveConfigBtn.disabled = true;
+    UI.saveConfigBtn.textContent = "Processing...";
+
+    const formData = new FormData(UI.configForm);
+    const selectedFiles = UI.modelFilesInput.files;
+
+    try {
+      let modelFileNames = AppState.modelDetails?.modelFiles || [];
+      if (selectedFiles.length > 0) {
+        modelFileNames = await Promise.all(
+          Array.from(selectedFiles).map(async (file) => {
+            await saveFile(file);
+            return file.name;
+          })
+        );
+      }
+
+      const inferenceTask = formData.get("inferenceTask");
+      const details = {
+        modelFiles: modelFileNames,
+        inputShape: formData.get("inputShape").toLowerCase() || "224x224",
+        labelsFormat: formData.get("labelsFormat") || "simpletext",
+        labelsSeparator: formData.get("labelsSeparator") || " ",
+        inferenceTask,
+      };
+      if (inferenceTask === "detection") {
+        details.scoreThreshold = parseFloat(formData.get("scoreThreshold")) || 0.5;
+        details.maxDetections = parseInt(formData.get("maxDetections"), 10) || 20;
+      }
+      AppState.modelDetails = details;
+      await setItemInDB("modelDetails", details);
+
+      const isLoaded = await _loadModelFromConfig();
+      if (isLoaded) {
+        _toggleConfigPanel(false);
+      }
+
+    } catch (err) {
+      console.error("Error saving configuration:", err);
+      alert("Failed to save configuration: " + err.message);
+    } finally {
+      UI.saveConfigBtn.disabled = false;
+      UI.saveConfigBtn.textContent = "Save Configuration";
+    }
+  }
+
+  async function _loadModelFromConfig() {
+    if (!AppState.modelDetails) {
+      _updateControlState(false, "Model configuration is missing.");
+      return false;
+    }
+    try {
+      _updateControlState(false, "Loading model...");
+      const modelLoadStart = performance.now();
+      AppState.model = await loadModel();
+      // **FIX**: The first performance metric call for model loading
+      _recordPerformanceMetric({
+        type: 'modelLoad',
+        location: 'injected',
+        durationMs: parseFloat((performance.now() - modelLoadStart).toFixed(2)),
+        modelType: AppState.modelDetails.inferenceTask
+      });
+      console.log("Model loaded successfully.");
+      alert("Model loaded successfully!");
+      _updateControlState(true);
+      return true;
+    } catch (error) {
+      console.error("Failed to load model:", error);
+      alert(`Error loading model: ${error.message}`);
+      _recordPerformanceMetric({ type: 'modelLoadError', location: 'injected', error: error.message });
+      AppState.model = null;
+      _updateControlState(false, "Failed to load model.");
+      return false;
+    }
+  }
+
+  function _toggleConfigPanel(show) {
+    UI.configPanel.classList.toggle('hidden', !show);
+  }
+
+  // --- Stream, Inference, and Prediction Logic ---
+
+    function nextFrame() {
+        return new Promise(resolve => {
+            AppState.inferenceLoopId = requestAnimationFrame(resolve);
+        });
+    }
+
+    async function _togglePredictMode() {
+        if (AppState.isPredicting) {
+            _stopPrediction();
+        } else {
+            await _startPrediction();
+        }
+    }
+
+    async function _startPrediction() {
+        console.log("DEBUG: _startPrediction() called.");
+
+        if (!AppState.model) {
+            alert("Please configure and load a model first.");
+            _toggleConfigPanel(true);
             return;
         }
-    }
-
-    if (aspectRatio) {
-      AppState.aspectRatio = aspectRatio;
-      localStorage.setItem('aspectRatio', aspectRatio);
-    }
-    UI.rect.classList.remove('active');
-    UI.overlay.classList.add('active');
-
-    let startX = 0,
-      startY = 0,
-      drawing = false;
-    const originalOverflow = document.body.style.overflow;
-
-    // Use a named function for the event listener to allow for proper removal
-    function handleOverlayMouseDown(e) {
-      startX = e.clientX;
-      startY = e.clientY;
-      drawing = true;
-      Object.assign(UI.rect.style, {
-        left: `${startX}px`,
-        top: `${startY}px`,
-        width: '0px',
-        height: '0px',
-      });
-      UI.rect.classList.add('active');
-      document.body.style.overflow = 'hidden'; // Prevent scrolling while drawing
-      
-      // Add mousemove and mouseup listeners to document for broader capture
-      document.addEventListener('mousemove', handleDocumentMouseMove);
-      document.addEventListener('mouseup', handleDocumentMouseUp);
-
-      // Remove this mousedown listener after it has run once
-      UI.overlay.removeEventListener('mousedown', handleOverlayMouseDown);
-    }
-    
-    // Remove any existing listener before adding a new one to prevent duplicates
-    // This requires handleOverlayMouseDown to be a stable function reference if _startDrawing can be called multiple times
-    // For simplicity here, assuming this setup path is clean or UI.overlay is fresh.
-    // If _startDrawing can be re-entrant with existing listeners, more careful management is needed.
-    UI.overlay.addEventListener('mousedown', handleOverlayMouseDown);
-
-
-    function handleDocumentMouseMove(e) {
-      if (!drawing) return;
-      let currentX = e.clientX,
-        currentY = e.clientY;
-      let width = Math.abs(currentX - startX),
-        height = Math.abs(currentY - startY);
-
-      if (AppState.aspectRatio && AppState.aspectRatio !== "0x0" && AppState.aspectRatio.includes('x')) { // check for valid aspect ratio string
-        const parts = AppState.aspectRatio.split('x').map(Number);
-        if (parts.length === 2 && parts[0] > 0 && parts[1] > 0) {
-            const [w, h] = parts;
-            const ratio = h / w;
-            height = width * ratio;
+        if (!AppState.mainRect) {
+            alert("Please draw an area first.");
+            return;
         }
-      }
 
+        try {
+            console.log("DEBUG: Requesting display media...");
+            AppState.stream = await navigator.mediaDevices.getDisplayMedia({
+                video: { cursor: "never" },
+                preferCurrentTab: true,
+                audio: false
+            });
+            console.log("DEBUG: Stream acquired successfully.");
 
-      // Adjust for drawing direction
-      const rectX = currentX < startX ? currentX : startX;
-      const rectY = currentY < startY ? currentY : startY;
+            AppState.stream.getVideoTracks()[0].onended = () => {
+                console.log("DEBUG: Stream ended by user via 'Stop sharing' button.");
+                _stopPrediction();
+            };
 
-      _updateRect(rectX, rectY, width, height);
+            const video = AppState.videoElement;
+            video.srcObject = AppState.stream;
+            
+            await video.play();
+            
+            AppState.isPredicting = true;
+            UI.predictButton.textContent = 'Stop Predictions';
+            UI.predictButton.dataset.for = 'stop';
+
+            _inferenceLoop();
+
+        } catch (err) {
+            console.error("DEBUG: Error in _startPrediction:", err.name, err.message);
+            if (err.name === 'NotAllowedError') {
+                 alert("Screen capture permission was denied.");
+            } else {
+                alert("Could not start screen capture.");
+            }
+            _stopPrediction();
+        }
     }
 
-    function handleDocumentMouseUp() {
-      if (!drawing) return; // Ensure this only runs if drawing was active
-      drawing = false;
-      UI.overlay.classList.remove('active');
-      UI.redrawButton?.classList.add('active'); // Check if redrawButton exists
-      UI.modelUI?.classList.add('active');    // Check if modelUI exists
-      document.body.style.overflow = originalOverflow; // Restore original overflow
-
-      AppState.mainRect = {
-        x: parseInt(UI.rect.style.left),
-        y: parseInt(UI.rect.style.top),
-        width: parseInt(UI.rect.style.width),
-        height: parseInt(UI.rect.style.height),
-      };
-      _saveRectState();
-      
-      // Clean up document-level listeners
-      document.removeEventListener('mousemove', handleDocumentMouseMove);
-      document.removeEventListener('mouseup', handleDocumentMouseUp);
-
-      // Re-add the mousedown listener to the overlay for the next drawing session
-      // if you want the user to be able to immediately redraw without clicking "Draw Area" again.
-      // Or, rely on the "Draw Area" button to call _startDrawing() again.
-      // For now, let's assume "Draw Area" button is the way to re-initiate.
-    }
-  }
-
-  function _onDragStart(e) {
-    e.preventDefault();
-    const parent = e.target.closest('[data-dragable="true"]'); // Use closest to get the draggable parent
-    if (!parent) return;
-
-    const parentRect = parent.getBoundingClientRect();
-    const offsetX = e.clientX - parentRect.left;
-    const offsetY = e.clientY - parentRect.top;
-    
-    // Max coordinates should account for the scroll position of the page
-    const scrollX = window.pageXOffset || document.documentElement.scrollLeft;
-    const scrollY = window.pageYOffset || document.documentElement.scrollTop;
-
-
-    function handleDrag(event) {
-      const x = event.clientX - offsetX;
-      const y = event.clientY - offsetY;
-
-      // Boundary checks against viewport dimensions
-      const maxX = window.innerWidth - parent.offsetWidth;
-      const maxY = window.innerHeight - parent.offsetHeight;
-
-      const constrainedX = Math.min(Math.max(0, x), maxX) + scrollX;
-      const constrainedY = Math.min(Math.max(0, y), maxY) + scrollY;
-
-      parent.style.left = `${constrainedX}px`;
-      parent.style.top = `${constrainedY}px`;
-
-      if (parent.classList.contains('__extension_aiScreen-rect') && AppState.mainRect) {
-        _updateRect(constrainedX, constrainedY, AppState.mainRect.width, AppState.mainRect.height);
-      }
+    function _stopPrediction() {
+        console.log("DEBUG: _stopPrediction() called.");
+        AppState.isPredicting = false;
+        if (AppState.stream) {
+            AppState.stream.getTracks().forEach(track => track.stop());
+            AppState.stream = null;
+        }
+        if (AppState.inferenceLoopId) {
+            cancelAnimationFrame(AppState.inferenceLoopId);
+            AppState.inferenceLoopId = null;
+        }
+        UI.predictButton.textContent = 'Start Predictions';
+        UI.predictButton.dataset.for = 'start';
     }
 
-    function stopDrag() {
-      document.removeEventListener('mousemove', handleDrag);
-      document.removeEventListener('mouseup', stopDrag);
-      // If dragging the main rect, save its final position
-      if (parent.classList.contains('__extension_aiScreen-rect')) {
+    async function _inferenceLoop() {
+        console.log("DEBUG: Starting main prediction loop.");
+
+        // **FIX**: Initialize variables for stable FPS calculation
+        let frameCount = 0;
+        let lastFpsTimestamp = performance.now();
+        let currentFps = 0;
+
+        while (AppState.isPredicting) {
+            const frameStartTime = performance.now();
+
+            const vW = AppState.videoElement.videoWidth;
+            const vH = AppState.videoElement.videoHeight;
+            
+            if (vW === 0 || vH === 0) {
+                await nextFrame();
+                continue;
+            }
+            
+            const viewportW = document.documentElement.clientWidth;
+            const viewportH = document.documentElement.clientHeight;
+            const rectX_relative = AppState.mainRect.x - window.scrollX;
+            const rectY_relative = AppState.mainRect.y - window.scrollY;
+            const xRatio = rectX_relative / viewportW;
+            const yRatio = rectY_relative / viewportH;
+            const widthRatio = AppState.mainRect.width / viewportW;
+            const heightRatio = AppState.mainRect.height / viewportH;
+            const sx = xRatio * vW;
+            const sy = yRatio * vH;
+            const sw = widthRatio * vW;
+            const sh = heightRatio * vH;
+            
+            if (sw > 0 && sh > 0) {
+                AppState.offscreenCanvas.width = sw;
+                AppState.offscreenCanvas.height = sh;
+                
+                const ctx = AppState.offscreenCanvas.getContext('2d', { willReadFrequently: true });
+                ctx.drawImage(AppState.videoElement, sx, sy, sw, sh, 0, 0, sw, sh);
+                const imageData = ctx.getImageData(0, 0, sw, sh);
+
+                let predictions;
+                const inferenceStartTime = performance.now();
+                try {
+                    if (AppState.modelDetails.inferenceTask === 'detection') {
+                        predictions = await detect(AppState.model, imageData, AppState.modelDetails);
+                    } else {
+                        predictions = await predict(AppState.model, imageData, AppState.modelDetails.inputShape);
+                    }
+                } catch (error) {
+                    console.error("DEBUG: Inference failed:", error);
+                    _stopPrediction();
+                    alert("An error occurred during model inference. Stopping prediction.");
+                    break;
+                }
+                const inferenceEndTime = performance.now();
+                
+                // --- **FIX**: New performance tracking logic ---
+                const inferenceDurationMs = inferenceEndTime - inferenceStartTime;
+                const totalFrameProcessingMs = performance.now() - frameStartTime;
+
+                frameCount++;
+                const now = performance.now();
+                if (now - lastFpsTimestamp >= 1000) {
+                    currentFps = frameCount;
+                    lastFpsTimestamp = now;
+                    frameCount = 0;
+                    UI.fps.textContent = `FPS: ${currentFps}`;
+                }
+
+                _recordPerformanceMetric({
+                    type: 'inference',
+                    location: 'injected',
+                    durationMs: parseFloat(inferenceDurationMs.toFixed(2)),
+                    totalFrameProcessingMs: parseFloat(totalFrameProcessingMs.toFixed(2)),
+                    fps: currentFps,
+                    modelType: AppState.modelDetails.inferenceTask,
+                    inputWidth: Math.round(sw),
+                    inputHeight: Math.round(sh)
+                });
+                
+                _handlePredictions(predictions, imageData);
+            }
+            
+            await nextFrame();
+        }
+        console.log("DEBUG: Exited main prediction loop.");
+    }
+  
+    // **FIX**: Removed the `fps` parameter as it's now handled in the loop
+    function _handlePredictions(predictions, imageData) {
+        const ctx = UI.canvas.getContext('2d');
+        UI.canvas.width = imageData.width;
+        UI.canvas.height = imageData.height;
+        ctx.putImageData(imageData, 0, 0);
+        UI.results.innerHTML = '';
+        // UI.fps.textContent is now handled in the loop for stability
+
+        if (!predictions || predictions.length === 0) return;
+
+        if (predictions[0].box) {
+            predictions.forEach(p => {
+                const { top, left, bottom, right } = p.box;
+                const x = left * UI.canvas.width;
+                const y = top * UI.canvas.height;
+                const w = (right - left) * UI.canvas.width;
+                const h = (bottom - top) * UI.canvas.height;
+                _drawBoundingBox(ctx, x, y, w, h, p.label, p.score);
+            });
+            UI.results.innerHTML = predictions.map(p => `<div>${p.label}: ${p.score.toFixed(2)}</div>`).join('');
+        } else {
+            UI.results.innerHTML = predictions.map(p => `<div>${p.label}: ${p.probability.toFixed(2)}</div>`).join('');
+        }
+    }
+
+    // --- Drawing and UI Interaction Logic ---
+    function _startDrawing() {
+        UI.rect.classList.remove('active');
+        UI.overlay.classList.add('active');
+        let startX = 0,
+            startY = 0;
+
+        function onMouseDown(e) {
+            AppState.isDrawing = true;
+            startX = e.clientX + window.scrollX;
+            startY = e.clientY + window.scrollY;
+            _updateRectState(startX, startY, 0, 0);
+            _updateRectUI(startX, startY, 0, 0);
+            UI.rect.classList.add('active');
+            document.addEventListener('mousemove', onMouseMove);
+            document.addEventListener('mouseup', onMouseUp);
+        }
+
+        function onMouseMove(e) {
+            if (!AppState.isDrawing) return;
+            let width = (e.clientX + window.scrollX) - startX;
+            let height = (e.clientY + window.scrollY) - startY;
+            _updateRectState(startX, startY, width, height);
+            _updateRectUI(startX, startY, width, height);
+        }
+
+        function onMouseUp() {
+            AppState.isDrawing = false;
+            UI.overlay.classList.remove('active');
+            localStorage.setItem('rectState', JSON.stringify(AppState.mainRect));
+            document.removeEventListener('mousemove', onMouseMove);
+            document.removeEventListener('mouseup', onMouseUp);
+            UI.overlay.removeEventListener('mousedown', onMouseDown);
+        }
+
+        UI.overlay.addEventListener('mousedown', onMouseDown);
+    }
+
+    function _updateRectState(x, y, w, h) {
         AppState.mainRect = {
-            x: parseInt(parent.style.left),
-            y: parseInt(parent.style.top),
-            width: parseInt(parent.style.width),
-            height: parseInt(parent.style.height),
+            x,
+            y,
+            width: w,
+            height: h
         };
-        _saveRectState();
-      }
     }
 
-    document.addEventListener('mousemove', handleDrag);
-    document.addEventListener('mouseup', stopDrag);
-  }
-
-  function _togglePredictMode(e) {
-    if (!e.target) return;
-    const currentAction = e.target.dataset.for;
-    if (!['start', 'stop'].includes(currentAction)) return;
-
-    const newAction = currentAction === 'start' ? 'stop' : 'start';
-    e.target.dataset.for = newAction;
-    e.target.textContent = newAction === 'start' ? 'Start predictions' : 'Stop predictions';
-
-    chrome.runtime.sendMessage({
-      target: 'worker',
-      type: 'predict',
-      action: currentAction,
-      targetTabId: chrome.devtools?.inspectedWindow?.tabId || null // Best effort for tabId, might not be available
-    }).catch(err => console.error("Error sending predict message:", err));
-
-    AppState.isPredicting = newAction === 'stop'; // Update AppState based on the NEW state
-    localStorage.setItem('isPredicting', AppState.isPredicting.toString());
-  }
-
-
-  function _handlePredictions({ predictions, imageData, fps }) {
-    if (!UI.canvas || !UI.results || !UI.fps) {
-        console.warn("[Injected] UI elements for predictions not ready.");
-        return;
-    }
-    const ctx = UI.canvas.getContext('2d');
-    if (!imageData || !imageData.data || !imageData.width || !imageData.height) {
-        console.warn("[Injected] Invalid imageData received for predictions.");
-        UI.fps.textContent = `FPS: ${fps || 0}`; // Still update FPS
-        return;
+    function _updateRectUI(x, y, w, h) {
+        Object.assign(UI.rect.style, {
+            left: `${x}px`,
+            top: `${y}px`,
+            width: `${w}px`,
+            height: `${h}px`
+        });
     }
 
-    const reconstructed = new ImageData(
-      new Uint8ClampedArray(imageData.data),
-      imageData.width,
-      imageData.height
-    );
-    UI.canvas.width = imageData.width;
-    UI.canvas.height = imageData.height;
-    ctx.clearRect(0, 0, UI.canvas.width, UI.canvas.height); // Clear before drawing
-    ctx.putImageData(reconstructed, 0, 0);
+    function _onDragStart(e) {
+        e.preventDefault();
+        const parent = e.target.closest('[data-dragable="true"]');
+        if (!parent) return;
 
-    UI.results.innerHTML = '';
+        const parentRect = parent.getBoundingClientRect();
+        const offsetX = e.clientX - parentRect.left;
+        const offsetY = e.clientY - parentRect.top;
 
-    if (predictions && predictions.length > 0 && predictions[0].box) {
-      predictions.forEach(p => {
-        const { top, left, bottom, right } = p.box;
-        const x = left * UI.canvas.width;
-        const y = top * UI.canvas.height;
-        const width = (right - left) * UI.canvas.width;
-        const height = (bottom - top) * UI.canvas.height;
-        
-        let color = 'yellow'; // Default color
-        if (p.score) { // Check if score exists
-            if (p.score < 0.5) color = 'red';
-            else if (p.score < 0.75) color = 'yellow';
-            else color = 'limegreen';
+        function handleDrag(event) {
+            let x = event.clientX - offsetX;
+            let y = event.clientY - offsetY;
+
+            const maxX = window.innerWidth - parent.offsetWidth;
+            const maxY = window.innerHeight - parent.offsetHeight;
+            x = Math.max(0, Math.min(x, maxX));
+            y = Math.max(0, Math.min(y, maxY));
+
+            const absoluteX = x + window.scrollX;
+            const absoluteY = y + window.scrollY;
+
+            parent.style.left = `${absoluteX}px`;
+            parent.style.top = `${absoluteY}px`;
+
+            if (parent.classList.contains('__extension_aiScreen-rect')) {
+                _updateRectState(absoluteX, absoluteY, parent.offsetWidth, parent.offsetHeight);
+            }
         }
 
-        _drawBoundingBox(ctx, x, y, width, height, color);
-        _drawBoundingBoxText(ctx, x, y, p.label || `Class ${p.classId}`, p.score?.toFixed(2) || 'N/A', color);
+        function stopDrag() {
+            document.removeEventListener('mousemove', handleDrag);
+            document.removeEventListener('mouseup', stopDrag);
+            if (parent.classList.contains('__extension_aiScreen-rect')) {
+                localStorage.setItem('rectState', JSON.stringify(AppState.mainRect));
+            }
+        }
+
+        document.addEventListener('mousemove', handleDrag);
+        document.addEventListener('mouseup', stopDrag);
+    }
+
+    function _drawBoundingBox(ctx, left, top, width, height, label, score) {
+        ctx.save();
+
+        let color = 'yellow';
+        if (score) {
+            if (score < 0.5) color = 'red';
+            else if (score >= 0.75) color = 'limegreen';
+        }
+
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2;
+        ctx.strokeRect(left, top, width, height);
+
+        ctx.font = '14px sans-serif';
+        const text = `${label}: ${score.toFixed(2)}`;
+        const textMetrics = ctx.measureText(text);
+        const textHeight = 14;
+        const padding = 4;
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+        ctx.fillRect(left, top - (textHeight + padding * 2), textMetrics.width + padding * 2, textHeight + padding * 2);
+
+        ctx.fillStyle = color;
+        ctx.fillText(text, left + padding, top - padding);
+
+        ctx.restore();
+    }
+
+  // --- Performance Logging ---
+  function _recordPerformanceMetric(metric) {
+      const enrichedMetric = { ...metric,
+          timestamp: Date.now(),
+          datetime: new Date().toISOString()
+      };
+      AppState.performanceLog.push(enrichedMetric);
+      clearTimeout(AppState.saveLogTimeout);
+      AppState.saveLogTimeout = setTimeout(() => chrome.storage.local.set({
+          performanceLog: AppState.performanceLog
+      }), 2000);
+  }
+
+  function _exportPerformanceData() {
+      if (!AppState.performanceLog || AppState.performanceLog.length === 0) {
+          alert("No performance data to export.");
+          return;
+      }
+
+      let headers = new Set();
+      AppState.performanceLog.forEach(row => Object.keys(row).forEach(key => headers.add(key)));
+
+      const sortedHeaders = Array.from(headers);
+      const csvRows = [sortedHeaders.join(',')];
+
+      for (const row of AppState.performanceLog) {
+          const values = sortedHeaders.map(header => {
+              const value = row[header] === undefined || row[header] === null ? '' : row[header];
+              let escaped = ('' + value).replace(/"/g, '""');
+              if (escaped.includes(',')) {
+                  escaped = `"${escaped}"`;
+              }
+              return escaped;
+          });
+          csvRows.push(values.join(','));
+      }
+
+      const csvString = csvRows.join('\n');
+      const blob = new Blob([csvString], {
+          type: 'text/csv;charset=utf-8;'
       });
-      UI.results.innerHTML = predictions
-        .map(p => `<div>${p.label || `Class ${p.classId}`}: ${p.score?.toFixed(2) || 'N/A'}</div>`)
-        .join('');
-    } else if (predictions && predictions.length > 0) {
-      UI.results.innerHTML = predictions
-        .map(p => `<div>${p.label}: ${p.probability?.toFixed(2) || 'N/A'}</div>`)
-        .join('');
-    } else {
-        UI.results.innerHTML = "No predictions.";
-    }
-
-    UI.fps.textContent = `FPS: ${fps || 0}`;
+      const link = document.createElement('a');
+      const url = URL.createObjectURL(blob);
+      link.setAttribute('href', url);
+      const filename = `performance_log_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.csv`;
+      link.setAttribute('download', filename);
+      link.style.visibility = 'hidden';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      alert("Performance data exported.");
   }
 
-  function _updateRect(x, y, width, height) {
-    if (!UI.rect) return;
-    Object.assign(UI.rect.style, { left: `${x}px`, top: `${y}px`, width: `${width}px`, height: `${height}px` });
-    AppState.mainRect = { x, y, width, height };
-    _saveRectState(); // Save immediately on update
-
-    // Debounce sending rect updates to offscreen if needed, or send directly
-    // For simplicity, sending directly here.
-    chrome.runtime.sendMessage({
-      target: 'offscreen',
-      type: 'rectUpdate',
-      rect: AppState.mainRect,
-      layoutSize: {
-        width: document.documentElement.clientWidth,
-        height: document.documentElement.clientHeight,
-      },
-    }).catch(err => console.warn("Error sending rectUpdate to offscreen:", err));
+  async function _clearPerformanceData() {
+      if (confirm('Are you sure you want to clear all performance data?')) {
+          AppState.performanceLog = [];
+          await chrome.storage.local.remove('performanceLog');
+          alert('Performance data cleared.');
+      }
   }
 
-  function _saveRectState() {
-    if (AppState.mainRect) {
-      localStorage.setItem('rectState', JSON.stringify(AppState.mainRect));
-    }
-  }
-
-  function _sendWindowSizeToOffscreen() {
-    chrome.runtime.sendMessage({
-      target: 'offscreen',
-      type: 'windowResize',
-      windowWidth: document.documentElement.clientWidth, // Viewport width
-      windowHeight: document.documentElement.clientHeight, // Viewport height
-      devicePixelRatio: window.devicePixelRatio,
-    }).catch(err => console.warn("Error sending windowResize to offscreen:", err));
-  }
-
-
-  function _drawBoundingBox(ctx, left, top, width, height, color) {
-    ctx.save();
-    // console.log("Drawing bounding box", { left, top, width, height }); // Can be noisy
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 2;
-    ctx.strokeRect(left, top, width, height);
-    ctx.restore(); // Restore context state
-  }
-
-  function _drawBoundingBoxText(ctx, left, top, label, score, color) {
-    ctx.save(); // Save context state
-    ctx.font = '14px sans-serif';
-    ctx.textBaseline = 'top';
-    const text = `${label}: ${score}`;
-    const metrics = ctx.measureText(text);
-    const padding = 4;
-    const textW = metrics.width + padding * 2;
-    const textH = 14 + padding * 2; // Approximate height for 14px font
-
-    // Ensure text box doesn't go off-canvas to the right
-    let textX = left;
-    if (textX + textW > ctx.canvas.width) {
-        textX = ctx.canvas.width - textW;
-    }
-    // Ensure text box doesn't go off-canvas to the bottom (less common for top alignment)
-    let textY = top;
-    if (textY + textH > ctx.canvas.height) {
-        textY = ctx.canvas.height - textH;
-    }
-    // Ensure text box doesn't go off-canvas to the left/top (if rect is at edge)
-    textX = Math.max(0, textX);
-    textY = Math.max(0, textY);
-
-
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.6)'; // Slightly more opaque background
-    ctx.fillRect(textX, textY, textW, textH);
-    
-    ctx.fillStyle = color;
-    ctx.textAlign = 'left';
-    ctx.fillText(text, textX + padding, textY + padding);
-    ctx.restore(); // Restore context state
-  }
-
+  // --- Start the script ---
+  _init();
 })();

@@ -1,14 +1,12 @@
 {
     "manifest_version": 3,
-    "name": "AI Model in Window",
-    "version": "1.0",
-    "description": "Choose area of interest and run AI model on it",
+    "name": "In-Page AI Inference",
+    "version": "2.0",
+    "description": "Select an area of your screen and run AI model inference directly on the page.",
     "permissions": [
         "scripting",
         "activeTab",
         "storage",
-        "tabCapture",
-        "offscreen",
         "tabs"
     ],
     "background": {
@@ -16,7 +14,7 @@
         "type": "module"
     },
     "action": {
-        "default_title": "AI Model in Window"
+        "default_title": "Start In-Page AI"
     },
     "host_permissions": [
         "*://*/*"
@@ -24,7 +22,8 @@
     "web_accessible_resources": [
         {
             "resources": [
-                "icons/*.svg"
+                "icons/*.svg",
+                "injected.css"
             ],
             "matches": [
                 "<all_urls>"

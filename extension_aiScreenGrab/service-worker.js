@@ -1,3 +1,4 @@
+// service-worker.js
 import { loadModel } from "./utils/modelHelpers.mjs";
 import { getItemFromDB, setItemInDB } from "./utils/indexedDB.mjs";
 
@@ -6,30 +7,61 @@ let modelDetails = {};
 let streamId = null;
 
 const activeTabs = new Set();
-let performanceLog = [];
-
 // Path to the bundled injected script
 const INJECTED_SCRIPT_PATH = 'dist/injected.bundle.js';
 
+
+// --- Performance Logging Refactor ---
+let performanceLog = [];
+const LOG_SAVE_ALARM_NAME = 'savePerformanceLogAlarm';
+let isLogDirty = false; // A flag to avoid unnecessary writes
+
+// Load existing logs on startup
 chrome.runtime.onInstalled.addListener(() => {
-  console.log('Extension installed.');
+  console.log('Extension installed/updated.');
+  
+  // Load previous logs from storage into memory.
   chrome.storage.local.get('performanceLog', (result) => {
     performanceLog = result.performanceLog || [];
   });
+
+  // Create an alarm to periodically save the logs.
+  // This is the correct way to do periodic tasks in a service worker.
+  chrome.alarms.create(LOG_SAVE_ALARM_NAME, {
+    periodInMinutes: 0.25 // Save every 15 seconds
+  });
 });
 
+// Listener for the periodic save alarm.
+chrome.alarms.onAlarm.addListener(async (alarm) => {
+  if (alarm.name === LOG_SAVE_ALARM_NAME) {
+    await savePerformanceLog();
+  }
+});
+
+// Optimized save function. Only writes to storage if the log is "dirty".
 async function savePerformanceLog() {
+  if (!isLogDirty) {
+    // No new metrics, so no need to write to storage.
+    return;
+  }
+  
   try {
-    await chrome.storage.local.set({ performanceLog });
-  } catch (e) {
-    console.warn("Error saving performance log to local storage:", e);
+    // Trim the log if it gets too large before saving.
     if (performanceLog.length > 2000) {
       console.warn("Performance log in memory is large, trimming older entries.");
       performanceLog = performanceLog.slice(performanceLog.length - 1000);
     }
+    
+    await chrome.storage.local.set({ performanceLog });
+    isLogDirty = false; // Reset the dirty flag after a successful save.
+    console.log('[ServiceWorker] Performance log batch-saved to storage.');
+  } catch (e) {
+    console.warn("Error batch-saving performance log to local storage:", e);
   }
 }
 
+// Optimized record function. Only pushes to the in-memory array.
 function recordPerformanceMetric(metric) {
   const enrichedMetric = {
     ...metric,
@@ -37,8 +69,10 @@ function recordPerformanceMetric(metric) {
     datetime: new Date(metric.timestamp || Date.now()).toISOString()
   };
   performanceLog.push(enrichedMetric);
-  savePerformanceLog();
+  isLogDirty = true; // Mark the log as "dirty" to be saved on the next alarm.
 }
+// --- End of Performance Logging Refactor ---
+
 
 chrome.action.onClicked.addListener(async (tab) => {
   const currentTabId = tab.id;
@@ -224,9 +258,7 @@ chrome.action.onClicked.addListener(async (tab) => {
       });
     }
 
-    // Give content script a moment to set up its listener after injection.
-    // This is a common workaround for "Receiving end does not exist".
-    await new Promise(resolve => setTimeout(resolve, 100)); // Adjust timeout as needed, 100-250ms is common.
+    await new Promise(resolve => setTimeout(resolve, 100));
 
     try {
       const tabInfo = await chrome.tabs.get(currentTabId);
@@ -305,13 +337,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           chrome.tabs.sendMessage(message.targetTabId, {
             type: 'predictions',
             predictions: message.predictions,
-            imageData: message.imageData,
             fps: message.fps,
           }).catch(e => {
             if (e.message.includes("Receiving end does not exist")) {
               console.warn(`[ServiceWorker] Failed to send predictions to tab ${message.targetTabId}: Content script likely gone.`);
-               activeTabs.delete(message.targetTabId); // Clean up active tab if CS is gone
-               // Optionally tell offscreen to stop sending for this tabId
+               activeTabs.delete(message.targetTabId);
                chrome.runtime.sendMessage({ type: 'stop-frameCaptureForTab', target: 'offscreen', targetTabId: message.targetTabId})
                    .catch(err => console.warn("Could not send stop-frameCaptureForTab to offscreen", err));
             } else {
@@ -328,35 +358,37 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         break;
 
       case 'getPerformanceLog':
-        sendResponse({ data: performanceLog });
-        return true;
+        // The user wants the log. First, force a save to ensure storage is up-to-date
+        // with the latest in-memory logs. Then, send the data.
+        savePerformanceLog().then(() => {
+          sendResponse({ data: performanceLog });
+        });
+        return true; // Indicates an asynchronous response.
 
       case 'clearPerformanceLog':
+        // This is a direct user action, so we perform it immediately.
         performanceLog = [];
-        savePerformanceLog().then(() => {
+        isLogDirty = false; // The log is now clean (and empty).
+        chrome.storage.local.set({ performanceLog }).then(() => {
+            console.log('[ServiceWorker] Performance log cleared from memory and storage.');
             sendResponse({ success: true });
         }).catch(err => {
             console.error("[ServiceWorker] Failed to save cleared performance log:", err);
             sendResponse({ success: false, error: err.message });
         });
-        return true;
+        return true; // Indicates an asynchronous response.
 
       default:
-        // console.warn("[ServiceWorker] Unknown message type for worker:", message); // Can be noisy
         return false;
     }
     return;
   }
 
   if (message.type === 'modelDetailsUpdated') {
-    // This listener is primarily for the onClicked flow when !existingModelDetails
-    // console.log("[ServiceWorker] Global listener: modelDetailsUpdated received.", message.modelDetails);
-    // If details can be updated globally at any time and affect the current SW state:
-    // modelDetails = message.modelDetails;
-    // modelLoaded = null; // Force reload for next operations if model details change
+    // This is handled within the onClicked flow.
   }
   
-  return false; // False for unhandled messages or those not needing an async response from this top-level listener
+  return false;
 });
 
 
@@ -367,14 +399,13 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
         try {
             await chrome.scripting.executeScript({
                 target: { tabId },
-                files: [INJECTED_SCRIPT_PATH], // Use bundled path
+                files: [INJECTED_SCRIPT_PATH],
             });
             await chrome.scripting.insertCSS({
                 target: { tabId },
-                files: ['injected.css'], // Ensure this path is correct relative to your project root
+                files: ['injected.css'],
             });
             
-            // Add a small delay before sending the message
             await new Promise(resolve => setTimeout(resolve, 100));
 
             const { streamId: savedStreamId } = await chrome.storage.local.get('streamId');
@@ -399,9 +430,6 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   if (activeTabs.has(tabId)) {
     console.log(`[ServiceWorker] Tab ${tabId} removed. Removing from active tabs.`);
     activeTabs.delete(tabId);
-    // If this was the tab associated with the current global `streamId`,
-    // and no other active tab is using it, consider releasing the stream.
-    // This logic can be complex. For now, we rely on the next tab capture to release.
   }
 });
 

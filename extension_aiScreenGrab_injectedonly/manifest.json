@@ -1,0 +1,34 @@
+{
+    "manifest_version": 3,
+    "name": "AI Model in Window",
+    "version": "1.0",
+    "description": "Choose area of interest and run AI model on it",
+    "permissions": [
+        "scripting",
+        "activeTab",
+        "storage",
+        "tabCapture",
+        "offscreen",
+        "tabs"
+    ],
+    "background": {
+        "service_worker": "dist/service-worker.bundle.js",
+        "type": "module"
+    },
+    "action": {
+        "default_title": "AI Model in Window"
+    },
+    "host_permissions": [
+        "*://*/*"
+    ],
+    "web_accessible_resources": [
+        {
+            "resources": [
+                "icons/*.svg"
+            ],
+            "matches": [
+                "<all_urls>"
+            ]
+        }
+    ]
+}

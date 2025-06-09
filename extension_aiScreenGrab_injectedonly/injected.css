@@ -1,0 +1,96 @@
+.__extension_aiScreen-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 999999997;
+    background: rgba(0, 0, 0, 0.5);
+    display: none;
+}
+
+.__extension_aiScreen-overlay.active {
+    display: block;
+    cursor: crosshair;
+}
+
+.__extension_aiScreen-rect {
+    position: fixed;
+    border: 2px solid #007bff;
+    /*background: rgba(0, 123, 255, 0.1);*/
+    z-index: 999999998;
+    display: none;
+    pointer-events: none;
+    box-sizing: content-box;
+    margin-top: -6px;
+    padding: 4px;
+}
+
+.__extension_aiScreen-rect.active {
+    display: block;
+}
+
+.__extension_aiScreen-modelUI {
+    position: fixed;
+    top: 10px;
+    right: 10px;
+    z-index: 999999999;
+    display: none;
+    border: 1px solid #007bff;
+    background: rgba(255, 255, 255, .5);
+    padding: 10px;
+    border-radius: 5px;
+    width: fit-content;
+    max-width: 40vw;
+}
+
+.__extension_aiScreen-modelUI.active {
+    display: block;
+}
+
+.__extension_aiScreen-modelUI button {
+    display: block;
+    margin: 5px 0;
+    padding: 5px 10px;
+    border: 1px solid #007bff;
+    background: #007bff;
+    color: #fff;
+    border-radius: 5px;
+    cursor: pointer;
+}
+
+.__extension_aiScreen-drawArea.active {
+    display: block;
+}
+
+.__extension_aiScreen-canvasContainer {
+    /* display: none;*/
+    position: fixed;
+    top: 0;
+    left: 0;
+    border: 1px solid black;
+    z-index: 100000;
+}
+
+.__extension_aiScreen-fps {
+    position: absolute;
+    top: 0;
+    left: 0;
+    color: white;
+    background: rgba(0, 0, 0, .5);
+    padding: 1px;
+}
+
+.__extension_aiScreen-results {
+    background: rgba(255, 255, 255, .5);
+    color: black;
+}
+
+.__extension_aiScreen-dragIcon {
+    width: 24px;
+    position: absolute;
+    top: 0px;
+    right: 0px;
+    cursor: move;
+    pointer-events: all;
+}

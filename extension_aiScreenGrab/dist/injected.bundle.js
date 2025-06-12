@@ -5,14 +5,12 @@
       aspectRatio: localStorage.getItem("aspectRatio") || "1x1",
       rect: JSON.parse(localStorage.getItem("rectState")) || null,
       isPredicting: localStorage.getItem("isPredicting") === "true",
-      mainRect: null,
-      resizeTimeout: null
+      mainRect: null
     };
     let UI = {};
     _initUIAndState();
     _setupUIEventListeners();
     _setupChromeMessageListener();
-    _setupWindowResizeListener();
     function _getHTML() {
       return `
       <div id="__extension_aiScreen">
@@ -113,7 +111,13 @@
     function _setupChromeMessageListener() {
       chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
         console.log("[Injected] Message received:", message);
-        if (message.type === "startDrawing") {
+        if (message.type === "getViewportSize") {
+          sendResponse({
+            width: document.documentElement.clientWidth,
+            height: document.documentElement.clientHeight
+          });
+          return;
+        } else if (message.type === "startDrawing") {
           if (!UI.container || !document.getElementById("__extension_aiScreen")) {
             _initUIAndState();
             await new Promise((resolve) => setTimeout(resolve, 50));
@@ -132,13 +136,6 @@
         }
         return true;
       });
-    }
-    function _setupWindowResizeListener() {
-      window.addEventListener("resize", () => {
-        clearTimeout(AppState.resizeTimeout);
-        AppState.resizeTimeout = setTimeout(_sendWindowSizeToOffscreen, 200);
-      });
-      _sendWindowSizeToOffscreen();
     }
     function _enableUIElements() {
       if (!UI.overlay || !UI.rect || !UI.modelUI || !UI.canvasContainer || !UI.results || !UI.fps) {
@@ -303,14 +300,6 @@
       if (AppState.mainRect) {
         localStorage.setItem("rectState", JSON.stringify(AppState.mainRect));
       }
-    }
-    function _sendWindowSizeToOffscreen() {
-      chrome.runtime.sendMessage({
-        target: "offscreen",
-        type: "windowResize",
-        windowWidth: document.documentElement.clientWidth,
-        windowHeight: document.documentElement.clientHeight
-      }).catch((err) => console.warn("Error sending windowResize to offscreen:", err));
     }
     function _drawBoundingBox(ctx, left, top, width, height, color) {
       ctx.save();

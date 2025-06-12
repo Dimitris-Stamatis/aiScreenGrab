@@ -43,10 +43,9 @@ form.addEventListener("submit", async (e) => {
   const selectedFiles = modelFilesInput.files;
   const modelFileObjects = Array.from(selectedFiles || []);
   let currentModelDetails = await getItemFromDB("modelDetails");
-  let modelFileNames = currentModelDetails?.modelFiles || []; // Start with existing files
+  let modelFileNames = currentModelDetails?.modelFiles || [];
 
   if (modelFileObjects.length > 0) {
-    // If new files are uploaded, replace the old list
     modelFileNames = []; 
     try {
       modelFileNames = await Promise.all(
@@ -54,7 +53,7 @@ form.addEventListener("submit", async (e) => {
           if (!(file instanceof Blob)) {
             throw new TypeError(`Invalid file type for ${file.name}`);
           }
-          await saveFile(file); // from indexedDB.mjs
+          await saveFile(file);
           return file.name;
         })
       );
@@ -66,9 +65,6 @@ form.addEventListener("submit", async (e) => {
       return;
     }
   }
-  // If no new files were uploaded, modelFileNames retains the existing ones.
-  // If there were no existing ones and none uploaded, it will be empty.
-
 
   const inferenceTask = formData.get("inferenceTask");
   const details = {
@@ -77,13 +73,13 @@ form.addEventListener("submit", async (e) => {
     labelsFormat: formData.get("labelsFormat") || "simpletext",
     labelsSeparator: formData.get("labelsSeparator") || " ",
     inferenceTask,
-    outputs: { // Provide defaults if fields are empty
+    outputs: { 
       numDetections: formData.get("numDetections") || 'num_detections',
       detectionBoxes: formData.get("detectionBoxes") || 'detection_boxes',
-      scores: formData.get("scores") || 'detection_scores', // Common default for TF Hub SSD Mobilenet
-      classNames: formData.get("classNames") || 'detection_classes', // Common default
+      scores: formData.get("scores") || 'detection_scores',
+      classNames: formData.get("classNames") || 'detection_classes',
     },
-    modelType: inferenceTask, // Align modelType with inferenceTask
+    modelType: inferenceTask,
   };
   
 
@@ -102,27 +98,25 @@ form.addEventListener("submit", async (e) => {
   submitButton.disabled = false;
   submitButton.textContent = "Save Configuration";
   alert("Configuration saved!");
-  // window.close(); // Consider not closing to allow immediate performance data interaction
 });
 
 // Function to load and display existing settings
 (async () => {
   const saved = await getItemFromDB("modelDetails");
   if (!saved) {
-    // Set defaults for a new configuration
     taskSelect.value = "classification";
     document.getElementById("inputShape").value = "224x224";
     document.getElementById("labelsFormat").value = "simpletext";
     document.getElementById("labelsSeparator").value = " ";
     document.getElementById("scoreThreshold").value = 0.5;
     document.getElementById("maxDetections").value = 20;
-    detectOpts.hidden = true; // Hide detection options if classification is default
+    detectOpts.hidden = true;
     return;
   }
 
   document.getElementById("inputShape").value = saved.inputShape || "224x224";
   taskSelect.value = saved.inferenceTask || 'classification';
-  taskSelect.dispatchEvent(new Event("change")); // Trigger change to show/hide detection options
+  taskSelect.dispatchEvent(new Event("change"));
 
   document.getElementById("labelsFormat").value = saved.labelsFormat || 'simpletext';
   document.getElementById("labelsSeparator").value = saved.labelsSeparator || ' ';
@@ -132,13 +126,12 @@ form.addEventListener("submit", async (e) => {
     document.getElementById("maxDetections").value = saved.maxDetections ?? 20;
   }
   
-  // Restore output names from saved details, using placeholders if not present
   document.getElementById("numDetections").value = saved.outputs?.numDetections || '';
   document.getElementById("detectionBoxes").value = saved.outputs?.detectionBoxes || '';
   document.getElementById("scores").value = saved.outputs?.scores || '';
   document.getElementById("classNames").value = saved.outputs?.classNames || '';
 
-  modelFilesList.innerHTML = ''; // Clear list
+  modelFilesList.innerHTML = '';
   if (saved.modelFiles && saved.modelFiles.length > 0) {
     saved.modelFiles.forEach((name) => {
       const li = document.createElement("li");
@@ -152,7 +145,7 @@ form.addEventListener("submit", async (e) => {
   }
 })();
 
-// --- Performance Data Export/Clear Logic ---
+// --- REWRITTEN Performance Data Export/Clear Logic ---
 function exportDataToCSV(data, filename) {
   if (!data || data.length === 0) {
     alert("No performance data to export.");
@@ -160,37 +153,52 @@ function exportDataToCSV(data, filename) {
   }
 
   const csvRows = [];
-  // Headers - dynamically create from a sample of objects to get all possible keys
-  let headers = [];
-  data.forEach(row => {
-    Object.keys(row).forEach(key => {
-      if (!headers.includes(key)) {
-        headers.push(key);
+
+  // Helper to flatten nested metric objects (e.g., { processing: { avg: 10 } } -> { processing_avg: 10 })
+  const flattenObject = (obj, prefix = '') =>
+    Object.keys(obj).reduce((acc, k) => {
+      const pre = prefix.length ? prefix + '_' : '';
+      if (typeof obj[k] === 'object' && obj[k] !== null && !Array.isArray(obj[k])) {
+        Object.assign(acc, flattenObject(obj[k], pre + k));
+      } else {
+        acc[pre + k] = obj[k];
       }
-    });
-  });
+      return acc;
+    }, {});
+
+  const flattenedData = data.map(row => flattenObject(row));
+
+  // Dynamically create headers from all keys in the flattened data
+  const headers = [...new Set(flattenedData.flatMap(row => Object.keys(row)))];
   
-  // Define a preferred order, others will be appended
+  // Define a preferred order for CSV columns; others will be appended alphabetically
   const preferredOrder = [
-    'datetime', 'timestamp', 'type', 'location', 'durationMs', 
-    'totalFrameProcessingMs', 'fps', 'modelType', 'inputWidth', 'inputHeight', 
-    'tabId', 'error', 'stack', 'message', 'messageType', 'targetComponent', 'scriptPath', 'context'
+    'datetime', 'timestamp', 'type', 'location', 
+    // Aggregated stats
+    'avgFps', 'framesInPeriod', 'durationOfPeriodMs',
+    'processing_avg', 'processing_min', 'processing_max',
+    'inference_avg', 'inference_min', 'inference_max',
+    'preparation_avg', 'preparation_min', 'preparation_max',
+    'postProcessing_avg', 'postProcessing_min', 'postProcessing_max',
+    // Original per-frame metrics (for legacy data)
+    'totalFrameProcessingMs', 'inferenceDurationMs', 'framePreparationMs', 'postProcessingMs', 'fps',
+    // General context
+    'modelType', 'inputWidth', 'inputHeight', 'tabId', 
+    // Errors/Info
+    'durationMs', 'error', 'stack', 'message', 'messageType', 'targetComponent', 'scriptPath', 'context'
   ];
-  // Sort headers: preferred first, then alphabetically for the rest
+  
   const sortedHeaders = preferredOrder.filter(h => headers.includes(h))
                            .concat(headers.filter(h => !preferredOrder.includes(h)).sort());
 
   csvRows.push(sortedHeaders.join(','));
 
-  for (const row of data) {
+  for (const row of flattenedData) {
     const values = sortedHeaders.map(header => {
       const value = row[header] === undefined || row[header] === null ? '' : row[header];
-      // Escape double quotes and ensure values containing commas are quoted
       let escaped = ('' + value).replace(/"/g, '""');
       if (escaped.includes(',')) {
           escaped = `"${escaped}"`;
-      } else if (value === '' && header === sortedHeaders[0]) { // Ensure empty first cells are still quoted if needed by some CSV readers
-          escaped = `""`; 
       }
       return escaped;
     });
@@ -214,6 +222,7 @@ function exportDataToCSV(data, filename) {
     alert("CSV export not supported by your browser.");
   }
 }
+
 
 if (exportPerformanceButton) {
   exportPerformanceButton.addEventListener('click', async () => {

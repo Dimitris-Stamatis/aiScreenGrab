@@ -6,7 +6,6 @@
     rect: JSON.parse(localStorage.getItem('rectState')) || null,
     isPredicting: localStorage.getItem('isPredicting') === 'true',
     mainRect: null,
-    resizeTimeout: null,
   };
 
   // --- UI Elements ---
@@ -18,7 +17,6 @@
   // --- Event Listeners ---
   _setupUIEventListeners();
   _setupChromeMessageListener();
-  _setupWindowResizeListener();
 
   // --- Helpers ---
 
@@ -53,7 +51,7 @@
 
   function _initUIAndState() {
     if (!document.getElementById('__extension_aiScreen')) {
-        document.body.insertAdjacentHTML('beforeend', _getHTML());
+      document.body.insertAdjacentHTML('beforeend', _getHTML());
     }
 
     UI = {
@@ -72,9 +70,9 @@
 
     const dragIconURL = chrome.runtime.getURL('icons/drag.svg');
     document.querySelectorAll('[data-dragable="true"]').forEach(el => {
-        if (!el.querySelector('.__extension_aiScreen-dragIcon')) {
-            el.appendChild(_createDragIcon(dragIconURL));
-        }
+      if (!el.querySelector('.__extension_aiScreen-dragIcon')) {
+        el.appendChild(_createDragIcon(dragIconURL));
+      }
     });
     UI.draggers = document.querySelectorAll('.__extension_aiScreen-dragIcon');
 
@@ -93,12 +91,12 @@
     });
     // MODIFICATION: Sync canvas container on restore
     if (UI.canvasContainer) {
-        Object.assign(UI.canvasContainer.style, {
-            left: `${x}px`,
-            top: `${y}px`,
-            width: `${width}px`,
-            height: `${height}px`,
-        });
+      Object.assign(UI.canvasContainer.style, {
+        left: `${x}px`,
+        top: `${y}px`,
+        width: `${width}px`,
+        height: `${height}px`,
+      });
     }
     UI.rect.classList.add('active');
     AppState.mainRect = { ...AppState.rect };
@@ -117,8 +115,8 @@
 
   function _setupUIEventListeners() {
     if (!UI.container) {
-        console.warn("UI container not found, cannot setup UI event listeners.");
-        return;
+      console.warn("UI container not found, cannot setup UI event listeners.");
+      return;
     }
     UI.redrawButton?.addEventListener('click', () => _startDrawing(AppState.aspectRatio));
     UI.configureModel?.addEventListener('click', () =>
@@ -131,10 +129,16 @@
   function _setupChromeMessageListener() {
     chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
       console.log('[Injected] Message received:', message);
-      if (message.type === 'startDrawing') {
+      if (message.type === 'getViewportSize') {
+        sendResponse({
+          width: document.documentElement.clientWidth,
+          height: document.documentElement.clientHeight
+        });
+        return;
+      } else if (message.type === 'startDrawing') {
         if (!UI.container || !document.getElementById('__extension_aiScreen')) {
-            _initUIAndState();
-            await new Promise(resolve => setTimeout(resolve, 50));
+          _initUIAndState();
+          await new Promise(resolve => setTimeout(resolve, 50));
         }
         _startDrawing(message.aspectRatio);
       } else if (message.type === 'predictions') {
@@ -144,25 +148,17 @@
         _setupUIEventListeners();
         _enableUIElements();
         if (message.aspectRatio) {
-            AppState.aspectRatio = message.aspectRatio;
-            localStorage.setItem('aspectRatio', AppState.aspectRatio);
+          AppState.aspectRatio = message.aspectRatio;
+          localStorage.setItem('aspectRatio', AppState.aspectRatio);
         }
       }
       return true;
     });
   }
 
-  function _setupWindowResizeListener() {
-    window.addEventListener('resize', () => {
-      clearTimeout(AppState.resizeTimeout);
-      AppState.resizeTimeout = setTimeout(_sendWindowSizeToOffscreen, 200);
-    });
-    _sendWindowSizeToOffscreen();
-  }
-
   function _enableUIElements() {
     if (!UI.overlay || !UI.rect || !UI.modelUI || !UI.canvasContainer || !UI.results || !UI.fps) {
-        return;
+      return;
     }
     UI.overlay.classList.remove('active');
     UI.rect.classList.add('active');
@@ -174,8 +170,8 @@
 
   function _startDrawing(aspectRatio = null) {
     if (!UI.rect || !UI.overlay) {
-        console.error("[Injected] Cannot start drawing, UI elements missing.");
-        return;
+      console.error("[Injected] Cannot start drawing, UI elements missing.");
+      return;
     }
     if (aspectRatio) {
       AppState.aspectRatio = aspectRatio;
@@ -197,7 +193,7 @@
       document.addEventListener('mouseup', handleDocumentMouseUp);
       UI.overlay.removeEventListener('mousedown', handleOverlayMouseDown);
     }
-    
+
     UI.overlay.addEventListener('mousedown', handleOverlayMouseDown);
 
     function handleDocumentMouseMove(e) {
@@ -207,7 +203,7 @@
       if (AppState.aspectRatio && AppState.aspectRatio.includes('x')) {
         const parts = AppState.aspectRatio.split('x').map(Number);
         if (parts.length === 2 && parts[0] > 0 && parts[1] > 0) {
-            height = width * (parts[1] / parts[0]);
+          height = width * (parts[1] / parts[0]);
         }
       }
       const rectX = e.clientX < startX ? e.clientX : startX;
@@ -342,15 +338,6 @@
     if (AppState.mainRect) {
       localStorage.setItem('rectState', JSON.stringify(AppState.mainRect));
     }
-  }
-
-  function _sendWindowSizeToOffscreen() {
-    chrome.runtime.sendMessage({
-      target: 'offscreen',
-      type: 'windowResize',
-      windowWidth: document.documentElement.clientWidth,
-      windowHeight: document.documentElement.clientHeight,
-    }).catch(err => console.warn("Error sending windowResize to offscreen:", err));
   }
 
   function _drawBoundingBox(ctx, left, top, width, height, color) {

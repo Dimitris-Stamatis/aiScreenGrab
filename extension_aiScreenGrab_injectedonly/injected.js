@@ -1,5 +1,6 @@
 // injected.js
 // This script combines the logic of the original injected script, the popup, and the offscreen document.
+// It now includes a 1-to-1 implementation of the offscreen document's performance aggregation system.
 
 import * as tf from "@tensorflow/tfjs";
 import { loadModel, predict, detect } from "./utils/modelHelpers.mjs";
@@ -25,6 +26,16 @@ import { setItemInDB, getItemFromDB, saveFile } from "./utils/indexedDB.mjs";
     performanceLog: [],
     offscreenCanvas: new OffscreenCanvas(1, 1),
     saveLogTimeout: null,
+    // --- NEW: Performance Aggregation State (1-to-1 with offscreen.js) ---
+    performanceAggregator: {
+      frameDurations: [],
+      prepDurations: [],
+      inferenceDurations: [],
+      postProcessingDurations: [],
+      framesInPeriod: 0,
+      lastReportTime: performance.now(),
+      reportIntervalMs: 10000 // Send a report every 1 second
+    },
   };
 
   // --- UI Element References ---
@@ -32,7 +43,7 @@ import { setItemInDB, getItemFromDB, saveFile } from "./utils/indexedDB.mjs";
 
   // --- Main Initializer ---
   function _init() {
-    console.log("DEBUG: _init() - Initializing AI In-Page Extension...");
+    console.log("AI In-Page: Initializing...");
     _injectUI();
     _queryUIElements();
     _bindEventListeners();
@@ -56,7 +67,7 @@ import { setItemInDB, getItemFromDB, saveFile } from "./utils/indexedDB.mjs";
                 <div class="__extension_aiScreen-overlay"></div>
                 <div class="__extension_aiScreen-rect" data-dragable="true"></div>
                 <div class="__extension_aiScreen-canvasContainer" data-dragable="true">
-                    <div class="__extension_aiScreen-fps"></div>
+                    <div class="__extension_aiScreen-fps">FPS: 0</div>
                     <canvas class="__extension_aiScreen-canvas"></canvas>
                 </div>
             </div>
@@ -166,7 +177,8 @@ import { setItemInDB, getItemFromDB, saveFile } from "./utils/indexedDB.mjs";
       _updateRectUI(savedRect.x, savedRect.y, savedRect.width, savedRect.height);
       UI.rect.classList.add('active');
     }
-    AppState.performanceLog = (await chrome.storage.local.get('performanceLog'))?.performanceLog || [];
+    const result = await chrome.storage.local.get('performanceLog');
+    AppState.performanceLog = result?.performanceLog || [];
   }
 
   function _bindEventListeners() {
@@ -183,7 +195,6 @@ import { setItemInDB, getItemFromDB, saveFile } from "./utils/indexedDB.mjs";
     UI.clearPerfButton.addEventListener('click', _clearPerformanceData);
   }
 
-  // --- Function to manage button states ---
   function _updateControlState(enabled, reason = '') {
     UI.predictButton.disabled = !enabled;
     UI.drawAreaButton.disabled = !enabled;
@@ -278,11 +289,11 @@ import { setItemInDB, getItemFromDB, saveFile } from "./utils/indexedDB.mjs";
       _updateControlState(false, "Loading model...");
       const modelLoadStart = performance.now();
       AppState.model = await loadModel();
-      // **FIX**: The first performance metric call for model loading
+      const modelLoadEnd = performance.now();
       _recordPerformanceMetric({
         type: 'modelLoad',
         location: 'injected',
-        durationMs: parseFloat((performance.now() - modelLoadStart).toFixed(2)),
+        durationMs: parseFloat((modelLoadEnd - modelLoadStart).toFixed(2)),
         modelType: AppState.modelDetails.inferenceTask
       });
       console.log("Model loaded successfully.");
@@ -292,7 +303,7 @@ import { setItemInDB, getItemFromDB, saveFile } from "./utils/indexedDB.mjs";
     } catch (error) {
       console.error("Failed to load model:", error);
       alert(`Error loading model: ${error.message}`);
-      _recordPerformanceMetric({ type: 'modelLoadError', location: 'injected', error: error.message });
+      _recordPerformanceMetric({ type: 'modelLoadError', location: 'injected', error: error.message, modelType: AppState.modelDetails?.inferenceTask });
       AppState.model = null;
       _updateControlState(false, "Failed to load model.");
       return false;
@@ -320,8 +331,6 @@ import { setItemInDB, getItemFromDB, saveFile } from "./utils/indexedDB.mjs";
     }
 
     async function _startPrediction() {
-        console.log("DEBUG: _startPrediction() called.");
-
         if (!AppState.model) {
             alert("Please configure and load a model first.");
             _toggleConfigPanel(true);
@@ -333,16 +342,13 @@ import { setItemInDB, getItemFromDB, saveFile } from "./utils/indexedDB.mjs";
         }
 
         try {
-            console.log("DEBUG: Requesting display media...");
             AppState.stream = await navigator.mediaDevices.getDisplayMedia({
                 video: { cursor: "never" },
                 preferCurrentTab: true,
                 audio: false
             });
-            console.log("DEBUG: Stream acquired successfully.");
 
             AppState.stream.getVideoTracks()[0].onended = () => {
-                console.log("DEBUG: Stream ended by user via 'Stop sharing' button.");
                 _stopPrediction();
             };
 
@@ -355,22 +361,30 @@ import { setItemInDB, getItemFromDB, saveFile } from "./utils/indexedDB.mjs";
             UI.predictButton.textContent = 'Stop Predictions';
             UI.predictButton.dataset.for = 'stop';
 
+            // Reset performance aggregator on start
+            AppState.performanceAggregator.lastReportTime = performance.now();
             _inferenceLoop();
 
         } catch (err) {
-            console.error("DEBUG: Error in _startPrediction:", err.name, err.message);
             if (err.name === 'NotAllowedError') {
                  alert("Screen capture permission was denied.");
             } else {
                 alert("Could not start screen capture.");
             }
-            _stopPrediction();
+            _stopPrediction(); // Ensure cleanup happens
         }
     }
 
     function _stopPrediction() {
-        console.log("DEBUG: _stopPrediction() called.");
+        if (!AppState.isPredicting) return; // Prevent multiple calls
+        
         AppState.isPredicting = false;
+        
+        // Flush any remaining performance metrics
+        if (AppState.performanceAggregator.framesInPeriod > 0) {
+            _reportPerformance();
+        }
+        
         if (AppState.stream) {
             AppState.stream.getTracks().forEach(track => track.stop());
             AppState.stream = null;
@@ -384,15 +398,19 @@ import { setItemInDB, getItemFromDB, saveFile } from "./utils/indexedDB.mjs";
     }
 
     async function _inferenceLoop() {
-        console.log("DEBUG: Starting main prediction loop.");
-
-        // **FIX**: Initialize variables for stable FPS calculation
-        let frameCount = 0;
         let lastFpsTimestamp = performance.now();
-        let currentFps = 0;
-
+        let frameCountForDisplay = 0;
+        
         while (AppState.isPredicting) {
-            const frameStartTime = performance.now();
+            const frameProcessStartTime = performance.now();
+            
+            // --- Instantaneous FPS for UI display ---
+            frameCountForDisplay++;
+            if (frameProcessStartTime - lastFpsTimestamp >= 1000) {
+                UI.fps.textContent = `FPS: ${frameCountForDisplay}`;
+                lastFpsTimestamp = frameProcessStartTime;
+                frameCountForDisplay = 0;
+            }
 
             const vW = AppState.videoElement.videoWidth;
             const vH = AppState.videoElement.videoHeight;
@@ -402,6 +420,7 @@ import { setItemInDB, getItemFromDB, saveFile } from "./utils/indexedDB.mjs";
                 continue;
             }
             
+            // --- Frame Preparation ---
             const viewportW = document.documentElement.clientWidth;
             const viewportH = document.documentElement.clientHeight;
             const rectX_relative = AppState.mainRect.x - window.scrollX;
@@ -415,74 +434,84 @@ import { setItemInDB, getItemFromDB, saveFile } from "./utils/indexedDB.mjs";
             const sw = widthRatio * vW;
             const sh = heightRatio * vH;
             
-            if (sw > 0 && sh > 0) {
-                AppState.offscreenCanvas.width = sw;
-                AppState.offscreenCanvas.height = sh;
-                
-                const ctx = AppState.offscreenCanvas.getContext('2d', { willReadFrequently: true });
-                ctx.drawImage(AppState.videoElement, sx, sy, sw, sh, 0, 0, sw, sh);
-                const imageData = ctx.getImageData(0, 0, sw, sh);
+            if (sw <= 1 || sh <= 1) {
+                await nextFrame();
+                continue;
+            };
 
+            AppState.offscreenCanvas.width = sw;
+            AppState.offscreenCanvas.height = sh;
+            
+            const drawStartTime = performance.now();
+            const ctx = AppState.offscreenCanvas.getContext('2d', { willReadFrequently: true });
+            ctx.drawImage(AppState.videoElement, sx, sy, sw, sh, 0, 0, sw, sh);
+            const imageData = ctx.getImageData(0, 0, sw, sh);
+            const prepareEndTime = performance.now();
+
+            // --- Model Inference ---
+            const inferenceStartTime = performance.now();
+            try {
                 let predictions;
-                const inferenceStartTime = performance.now();
-                try {
-                    if (AppState.modelDetails.inferenceTask === 'detection') {
-                        predictions = await detect(AppState.model, imageData, AppState.modelDetails);
-                    } else {
-                        predictions = await predict(AppState.model, imageData, AppState.modelDetails.inputShape);
-                    }
-                } catch (error) {
-                    console.error("DEBUG: Inference failed:", error);
-                    _stopPrediction();
-                    alert("An error occurred during model inference. Stopping prediction.");
-                    break;
+                if (AppState.modelDetails.inferenceTask === 'detection') {
+                    predictions = await detect(AppState.model, imageData, AppState.modelDetails);
+                } else {
+                    predictions = await predict(AppState.model, imageData, AppState.modelDetails.inputShape);
                 }
                 const inferenceEndTime = performance.now();
-                
-                // --- **FIX**: New performance tracking logic ---
-                const inferenceDurationMs = inferenceEndTime - inferenceStartTime;
-                const totalFrameProcessingMs = performance.now() - frameStartTime;
 
-                frameCount++;
-                const now = performance.now();
-                if (now - lastFpsTimestamp >= 1000) {
-                    currentFps = frameCount;
-                    lastFpsTimestamp = now;
-                    frameCount = 0;
-                    UI.fps.textContent = `FPS: ${currentFps}`;
-                }
-
-                _recordPerformanceMetric({
-                    type: 'inference',
-                    location: 'injected',
-                    durationMs: parseFloat(inferenceDurationMs.toFixed(2)),
-                    totalFrameProcessingMs: parseFloat(totalFrameProcessingMs.toFixed(2)),
-                    fps: currentFps,
-                    modelType: AppState.modelDetails.inferenceTask,
-                    inputWidth: Math.round(sw),
-                    inputHeight: Math.round(sh)
-                });
-                
+                // --- Handle predictions for UI ---
                 _handlePredictions(predictions, imageData);
+
+                // --- AGGREGATE PERFORMANCE METRICS (No immediate sending) ---
+                const postProcessingStartTime = performance.now();
+                const totalFrameMs = inferenceEndTime - frameProcessStartTime;
+                const prepMs = prepareEndTime - drawStartTime;
+                const inferenceMs = inferenceEndTime - inferenceStartTime;
+                const postProcessingMs = postProcessingStartTime - inferenceEndTime;
+
+                AppState.performanceAggregator.frameDurations.push(totalFrameMs);
+                AppState.performanceAggregator.prepDurations.push(prepMs);
+                AppState.performanceAggregator.inferenceDurations.push(inferenceMs);
+                AppState.performanceAggregator.postProcessingDurations.push(postProcessingMs);
+                AppState.performanceAggregator.framesInPeriod++;
+
+            } catch (error) {
+                console.error("Inference failed:", error);
+                _recordPerformanceMetric({
+                    type: 'inferenceError',
+                    location: 'injected',
+                    modelType: AppState.modelDetails.inferenceTask,
+                    durationUntilErrorMs: parseFloat((performance.now() - inferenceStartTime).toFixed(2)),
+                    error: error.message,
+                    stack: error.stack,
+                    inputWidth: Math.round(sw),
+                    inputHeight: Math.round(sh),
+                });
+                alert("An error occurred during model inference. Stopping prediction.");
+                _stopPrediction();
+                break; // Exit the loop
             }
             
+            // --- Check if it's time to send the aggregated report ---
+            const now = performance.now();
+            if (now - AppState.performanceAggregator.lastReportTime >= AppState.performanceAggregator.reportIntervalMs) {
+                _reportPerformance();
+            }
+
             await nextFrame();
         }
-        console.log("DEBUG: Exited main prediction loop.");
     }
   
-    // **FIX**: Removed the `fps` parameter as it's now handled in the loop
     function _handlePredictions(predictions, imageData) {
         const ctx = UI.canvas.getContext('2d');
         UI.canvas.width = imageData.width;
         UI.canvas.height = imageData.height;
         ctx.putImageData(imageData, 0, 0);
         UI.results.innerHTML = '';
-        // UI.fps.textContent is now handled in the loop for stability
 
         if (!predictions || predictions.length === 0) return;
 
-        if (predictions[0].box) {
+        if (predictions[0].box) { // Detection
             predictions.forEach(p => {
                 const { top, left, bottom, right } = p.box;
                 const x = left * UI.canvas.width;
@@ -492,7 +521,7 @@ import { setItemInDB, getItemFromDB, saveFile } from "./utils/indexedDB.mjs";
                 _drawBoundingBox(ctx, x, y, w, h, p.label, p.score);
             });
             UI.results.innerHTML = predictions.map(p => `<div>${p.label}: ${p.score.toFixed(2)}</div>`).join('');
-        } else {
+        } else { // Classification
             UI.results.innerHTML = predictions.map(p => `<div>${p.label}: ${p.probability.toFixed(2)}</div>`).join('');
         }
     }
@@ -501,8 +530,7 @@ import { setItemInDB, getItemFromDB, saveFile } from "./utils/indexedDB.mjs";
     function _startDrawing() {
         UI.rect.classList.remove('active');
         UI.overlay.classList.add('active');
-        let startX = 0,
-            startY = 0;
+        let startX = 0, startY = 0;
 
         function onMouseDown(e) {
             AppState.isDrawing = true;
@@ -531,27 +559,11 @@ import { setItemInDB, getItemFromDB, saveFile } from "./utils/indexedDB.mjs";
             document.removeEventListener('mouseup', onMouseUp);
             UI.overlay.removeEventListener('mousedown', onMouseDown);
         }
-
         UI.overlay.addEventListener('mousedown', onMouseDown);
     }
 
-    function _updateRectState(x, y, w, h) {
-        AppState.mainRect = {
-            x,
-            y,
-            width: w,
-            height: h
-        };
-    }
-
-    function _updateRectUI(x, y, w, h) {
-        Object.assign(UI.rect.style, {
-            left: `${x}px`,
-            top: `${y}px`,
-            width: `${w}px`,
-            height: `${h}px`
-        });
-    }
+    function _updateRectState(x, y, w, h) { AppState.mainRect = { x, y, width: w, height: h }; }
+    function _updateRectUI(x, y, w, h) { Object.assign(UI.rect.style, { left: `${x}px`, top: `${y}px`, width: `${w}px`, height: `${h}px` }); }
 
     function _onDragStart(e) {
         e.preventDefault();
@@ -565,18 +577,14 @@ import { setItemInDB, getItemFromDB, saveFile } from "./utils/indexedDB.mjs";
         function handleDrag(event) {
             let x = event.clientX - offsetX;
             let y = event.clientY - offsetY;
-
             const maxX = window.innerWidth - parent.offsetWidth;
             const maxY = window.innerHeight - parent.offsetHeight;
             x = Math.max(0, Math.min(x, maxX));
             y = Math.max(0, Math.min(y, maxY));
-
             const absoluteX = x + window.scrollX;
             const absoluteY = y + window.scrollY;
-
             parent.style.left = `${absoluteX}px`;
             parent.style.top = `${absoluteY}px`;
-
             if (parent.classList.contains('__extension_aiScreen-rect')) {
                 _updateRectState(absoluteX, absoluteY, parent.offsetWidth, parent.offsetHeight);
             }
@@ -589,49 +597,85 @@ import { setItemInDB, getItemFromDB, saveFile } from "./utils/indexedDB.mjs";
                 localStorage.setItem('rectState', JSON.stringify(AppState.mainRect));
             }
         }
-
         document.addEventListener('mousemove', handleDrag);
         document.addEventListener('mouseup', stopDrag);
     }
 
     function _drawBoundingBox(ctx, left, top, width, height, label, score) {
         ctx.save();
-
-        let color = 'yellow';
-        if (score) {
-            if (score < 0.5) color = 'red';
-            else if (score >= 0.75) color = 'limegreen';
-        }
-
+        let color = score < 0.5 ? 'red' : (score >= 0.75 ? 'limegreen' : 'yellow');
         ctx.strokeStyle = color;
         ctx.lineWidth = 2;
         ctx.strokeRect(left, top, width, height);
-
         ctx.font = '14px sans-serif';
         const text = `${label}: ${score.toFixed(2)}`;
         const textMetrics = ctx.measureText(text);
-        const textHeight = 14;
-        const padding = 4;
+        const textHeight = 14, padding = 4;
         ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
         ctx.fillRect(left, top - (textHeight + padding * 2), textMetrics.width + padding * 2, textHeight + padding * 2);
-
         ctx.fillStyle = color;
         ctx.fillText(text, left + padding, top - padding);
-
         ctx.restore();
     }
 
-  // --- Performance Logging ---
+  // --- Performance Logging & Reporting (1-to-1 with offscreen.js) ---
+
   function _recordPerformanceMetric(metric) {
       const enrichedMetric = { ...metric,
           timestamp: Date.now(),
           datetime: new Date().toISOString()
       };
       AppState.performanceLog.push(enrichedMetric);
+      // Debounce saving to storage to avoid excessive writes
       clearTimeout(AppState.saveLogTimeout);
       AppState.saveLogTimeout = setTimeout(() => chrome.storage.local.set({
           performanceLog: AppState.performanceLog
-      }), 2000);
+      }), 5000);
+  }
+  
+  function _reportPerformance() {
+      const aggregator = AppState.performanceAggregator;
+      if (aggregator.framesInPeriod === 0) return;
+
+      const now = performance.now();
+      const totalTimeSeconds = (now - aggregator.lastReportTime) / 1000;
+      const avgFps = parseFloat((aggregator.framesInPeriod / totalTimeSeconds).toFixed(2));
+
+      const calculateStats = (arr) => {
+          if (arr.length === 0) return { avg: 0, min: 0, max: 0 };
+          const sum = arr.reduce((a, b) => a + b, 0);
+          const avg = sum / arr.length;
+          return {
+              avg: parseFloat(avg.toFixed(2)),
+              min: parseFloat(Math.min(...arr).toFixed(2)),
+              max: parseFloat(Math.max(...arr).toFixed(2)),
+          };
+      };
+
+      const aggregatedMetric = {
+          type: 'inference_aggregated',
+          location: 'injected',
+          modelType: AppState.modelDetails.inferenceTask,
+          processing: calculateStats(aggregator.frameDurations),
+          preparation: calculateStats(aggregator.prepDurations),
+          inference: calculateStats(aggregator.inferenceDurations),
+          postProcessing: calculateStats(aggregator.postProcessingDurations),
+          avgFps: avgFps,
+          framesInPeriod: aggregator.framesInPeriod,
+          durationOfPeriodMs: parseFloat((now - aggregator.lastReportTime).toFixed(2)),
+          inputWidth: AppState.offscreenCanvas.width,
+          inputHeight: AppState.offscreenCanvas.height,
+      };
+
+      _recordPerformanceMetric(aggregatedMetric);
+
+      // Reset aggregator for the next period
+      aggregator.frameDurations = [];
+      aggregator.prepDurations = [];
+      aggregator.inferenceDurations = [];
+      aggregator.postProcessingDurations = [];
+      aggregator.framesInPeriod = 0;
+      aggregator.lastReportTime = now;
   }
 
   function _exportPerformanceData() {
@@ -639,14 +683,36 @@ import { setItemInDB, getItemFromDB, saveFile } from "./utils/indexedDB.mjs";
           alert("No performance data to export.");
           return;
       }
+      
+      // Use the robust flattening logic from the other extension for 1-to-1 comparable CSVs
+      const flattenObject = (obj, prefix = '') =>
+          Object.keys(obj).reduce((acc, k) => {
+              const pre = prefix.length ? prefix + '_' : '';
+              if (typeof obj[k] === 'object' && obj[k] !== null && !Array.isArray(obj[k])) {
+                  Object.assign(acc, flattenObject(obj[k], pre + k));
+              } else {
+                  acc[pre + k] = obj[k];
+              }
+              return acc;
+          }, {});
 
-      let headers = new Set();
-      AppState.performanceLog.forEach(row => Object.keys(row).forEach(key => headers.add(key)));
-
-      const sortedHeaders = Array.from(headers);
+      const flattenedData = AppState.performanceLog.map(row => flattenObject(row));
+      const headers = [...new Set(flattenedData.flatMap(row => Object.keys(row)))];
+      const preferredOrder = [
+        'datetime', 'timestamp', 'type', 'location', 
+        'avgFps', 'framesInPeriod', 'durationOfPeriodMs',
+        'processing_avg', 'processing_min', 'processing_max',
+        'inference_avg', 'inference_min', 'inference_max',
+        'preparation_avg', 'preparation_min', 'preparation_max',
+        'postProcessing_avg', 'postProcessing_min', 'postProcessing_max',
+        'durationMs', 'modelType', 'inputWidth', 'inputHeight',
+        'error', 'stack',
+      ];
+      const sortedHeaders = preferredOrder.filter(h => headers.includes(h))
+                               .concat(headers.filter(h => !preferredOrder.includes(h)).sort());
+      
       const csvRows = [sortedHeaders.join(',')];
-
-      for (const row of AppState.performanceLog) {
+      for (const row of flattenedData) {
           const values = sortedHeaders.map(header => {
               const value = row[header] === undefined || row[header] === null ? '' : row[header];
               let escaped = ('' + value).replace(/"/g, '""');
@@ -659,14 +725,11 @@ import { setItemInDB, getItemFromDB, saveFile } from "./utils/indexedDB.mjs";
       }
 
       const csvString = csvRows.join('\n');
-      const blob = new Blob([csvString], {
-          type: 'text/csv;charset=utf-8;'
-      });
+      const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
       const link = document.createElement('a');
       const url = URL.createObjectURL(blob);
       link.setAttribute('href', url);
-      const filename = `performance_log_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.csv`;
-      link.setAttribute('download', filename);
+      link.setAttribute('download', `performance_log_injected_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.csv`);
       link.style.visibility = 'hidden';
       document.body.appendChild(link);
       link.click();
@@ -676,7 +739,7 @@ import { setItemInDB, getItemFromDB, saveFile } from "./utils/indexedDB.mjs";
   }
 
   async function _clearPerformanceData() {
-      if (confirm('Are you sure you want to clear all performance data?')) {
+      if (confirm('Are you sure you want to clear all performance data? This action cannot be undone.')) {
           AppState.performanceLog = [];
           await chrome.storage.local.remove('performanceLog');
           alert('Performance data cleared.');

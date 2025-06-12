@@ -64584,23 +64584,36 @@ console.log("Offscreen script loaded");
 var video = document.createElement("video");
 var offscreenCanvas = new OffscreenCanvas(0, 0);
 var ctx = offscreenCanvas.getContext("2d", { willReadFrequently: true });
+var viewportCanvas = new OffscreenCanvas(1, 1);
+var viewportCtx = viewportCanvas.getContext("2d", { willReadFrequently: true });
 var stream = null;
 var rect = { x: 0, y: 0, width: 0, height: 0 };
 var modelLoaded = null;
 var modelDetails = null;
 var targetTabId = null;
-var sendframesstatus = false;
-var isLoopRunning = false;
 var layoutWidth = null;
 var layoutHeight = null;
+var loopTimeoutId = null;
+var isProcessingFrame = false;
+var lastKnownViewportSize = null;
+var sendframesstatus = false;
 var lastFrameTime = performance.now();
 var fps = 0;
+var performanceAggregator = {
+  frameDurations: [],
+  prepDurations: [],
+  inferenceDurations: [],
+  postProcessingDurations: [],
+  framesInPeriod: 0,
+  lastReportTime: performance.now(),
+  reportIntervalMs: 1e4
+};
 chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
   console.log("[Offscreen] Message received:", message);
   if (message.target !== "offscreen") return true;
   switch (message.type) {
     case "releaseStream":
-      sendframesstatus = false;
+      stopPredictionLoop();
       if (stream) {
         stream.getTracks().forEach((track) => track.stop());
         stream = null;
@@ -64623,30 +64636,9 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
         const modelLoadEndTime = performance.now();
         console.log("[Offscreen] Model loaded successfully.");
         chrome.runtime.sendMessage({
-          target: "worker",
-          type: "recordPerformanceMetric",
-          metric: {
-            type: "modelLoad",
-            location: "offscreen",
-            durationMs: parseFloat((modelLoadEndTime - modelLoadStartTime).toFixed(2)),
-            modelType: modelDetails.inferenceTask || "unknown"
-          }
-        }).catch((e) => console.warn("Error sending modelLoad metric:", e.message));
+          /* ... model load metric ... */
+        }).catch((e) => console.warn(e.message));
       } catch (err) {
-        const modelLoadEndTime = performance.now();
-        console.error("[Offscreen] Failed to load model:", err);
-        chrome.runtime.sendMessage({
-          target: "worker",
-          type: "recordPerformanceMetric",
-          metric: {
-            type: "modelLoadError",
-            location: "offscreen",
-            durationMs: parseFloat((modelLoadEndTime - modelLoadStartTime).toFixed(2)),
-            modelType: modelDetails?.inferenceTask || "unknown",
-            error: err.message
-          }
-        }).catch((e) => console.warn("Error sending modelLoadError metric:", e.message));
-        modelLoaded = null;
       }
       break;
     case "start-frameCapture":
@@ -64657,11 +64649,7 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
       if (message.targetTabId) {
         targetTabId = message.targetTabId;
       }
-      sendframesstatus = true;
-      console.log("[Offscreen] Frame capture requested for tab:", targetTabId);
-      if (!isLoopRunning) {
-        predictionLoop();
-      }
+      startPredictionLoop();
       if (video.paused) {
         video.play().catch((e) => console.error("Error playing video:", e));
       }
@@ -64669,12 +64657,15 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
     case "stop-frameCapture":
     case "stop-frameCaptureForTab":
       console.log(`[Offscreen] Received ${message.type}. Commanding loop to stop.`);
-      sendframesstatus = false;
+      stopPredictionLoop();
       break;
     case "rectUpdate":
       rect = message.rect;
       layoutWidth = message.layoutSize?.width;
       layoutHeight = message.layoutSize?.height;
+      if (message.layoutSize) {
+        lastKnownViewportSize = message.layoutSize;
+      }
       break;
     case "streamStart":
       console.log("[Offscreen] streamStart received for tab:", message.targetTabId);
@@ -64693,7 +64684,7 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
           }
         });
         video.srcObject = stream;
-        console.log("[Offscreen] New stream acquired.");
+        console.log("[Offscreen] New stream acquired at native resolution.");
       } catch (error) {
         console.error("[Offscreen] Error getting new stream:", error);
         stream = null;
@@ -64714,22 +64705,45 @@ video.addEventListener("pause", () => {
   console.log("[Offscreen] Video paused, ensuring prediction loop stops.");
   sendframesstatus = false;
 });
-async function predictionLoop() {
-  console.log("[Offscreen] Prediction loop starting.");
-  isLoopRunning = true;
-  try {
-    while (sendframesstatus) {
-      await processFrame();
-    }
-  } catch (error) {
-    console.error("[Offscreen] A critical error occurred in the prediction loop:", error);
-  } finally {
-    isLoopRunning = false;
+function startPredictionLoop() {
+  if (sendframesstatus) return;
+  console.log("[Offscreen] Starting prediction loop.");
+  sendframesstatus = true;
+  isProcessingFrame = false;
+  performanceAggregator.lastReportTime = performance.now();
+  predictionLoop();
+}
+function stopPredictionLoop() {
+  if (!sendframesstatus) return;
+  console.log("[Offscreen] Stopping prediction loop.");
+  sendframesstatus = false;
+  if (loopTimeoutId) {
+    clearTimeout(loopTimeoutId);
+  }
+  if (performanceAggregator.framesInPeriod > 0) {
+    reportPerformance();
+  }
+}
+function predictionLoop() {
+  if (!sendframesstatus) {
     console.log("[Offscreen] Prediction loop has fully stopped.");
+    return;
+  }
+  if (isProcessingFrame) {
+    return;
+  }
+  isProcessingFrame = true;
+  processFrame().finally(() => {
+    isProcessingFrame = false;
+    loopTimeoutId = setTimeout(predictionLoop, 0);
+  });
+  const now2 = performance.now();
+  if (now2 - performanceAggregator.lastReportTime >= performanceAggregator.reportIntervalMs) {
+    reportPerformance();
   }
 }
 async function processFrame() {
-  if (!modelLoaded || !video.srcObject || video.paused || video.videoWidth === 0) {
+  if (!modelLoaded || !video.srcObject || video.paused || video.videoWidth === 0 || !lastKnownViewportSize) {
     await new Promise((resolve) => setTimeout(resolve, 100));
     return;
   }
@@ -64737,17 +64751,18 @@ async function processFrame() {
   const now2 = performance.now();
   fps = Math.round(1e3 / (now2 - lastFrameTime));
   lastFrameTime = now2;
-  const vw = video.videoWidth;
-  const vh = video.videoHeight;
-  const sx = rect.x / layoutWidth * vw;
-  const sy = rect.y / layoutHeight * vh;
-  const sw = rect.width / layoutWidth * vw;
-  const sh = rect.height / layoutHeight * vh;
+  viewportCanvas.width = lastKnownViewportSize.width;
+  viewportCanvas.height = lastKnownViewportSize.height;
+  viewportCtx.drawImage(video, 0, 0, viewportCanvas.width, viewportCanvas.height);
+  const sx = rect.x;
+  const sy = rect.y;
+  const sw = rect.width;
+  const sh = rect.height;
   if (sw <= 1 || sh <= 1) return;
   offscreenCanvas.width = Math.floor(sw);
   offscreenCanvas.height = Math.floor(sh);
   const drawStartTime = performance.now();
-  ctx.drawImage(video, sx, sy, sw, sh, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
+  ctx.drawImage(viewportCanvas, sx, sy, sw, sh, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
   const imageData = ctx.getImageData(0, 0, offscreenCanvas.width, offscreenCanvas.height);
   const prepareEndTime = performance.now();
   const inferenceStartTime = performance.now();
@@ -64760,8 +64775,6 @@ async function processFrame() {
     }
     const inferenceEndTime = performance.now();
     if (sendframesstatus && targetTabId) {
-      const framePreparationMs = parseFloat((prepareEndTime - drawStartTime).toFixed(2));
-      const inferenceDurationMs = parseFloat((inferenceEndTime - inferenceStartTime).toFixed(2));
       chrome.runtime.sendMessage({
         type: "predictions",
         predictions,
@@ -64771,48 +64784,48 @@ async function processFrame() {
       }).catch((e) => {
       });
       const messageSentTime = performance.now();
-      const totalFrameProcessingMs = parseFloat((messageSentTime - frameProcessStartTime).toFixed(2));
-      const postProcessingMs = parseFloat((messageSentTime - inferenceEndTime).toFixed(2));
-      chrome.runtime.sendMessage({
-        target: "worker",
-        type: "recordPerformanceMetric",
-        metric: {
-          type: "inference",
-          location: "offscreen",
-          modelType: modelDetails.inferenceTask,
-          // Granular Timings
-          totalFrameProcessingMs,
-          framePreparationMs,
-          inferenceDurationMs,
-          postProcessingMs,
-          // Context
-          inputWidth: offscreenCanvas.width,
-          inputHeight: offscreenCanvas.height,
-          fps,
-          tabId: targetTabId
-        }
-      }).catch((e) => console.warn("Error sending inference metric:", e.message));
+      performanceAggregator.frameDurations.push(inferenceEndTime - frameProcessStartTime);
+      performanceAggregator.prepDurations.push(prepareEndTime - drawStartTime);
+      performanceAggregator.inferenceDurations.push(inferenceEndTime - inferenceStartTime);
+      performanceAggregator.postProcessingDurations.push(messageSentTime - inferenceEndTime);
+      performanceAggregator.framesInPeriod++;
     }
   } catch (error) {
-    const errorTime = performance.now();
-    console.error("[Offscreen] Prediction error on a frame:", error);
-    chrome.runtime.sendMessage({
-      target: "worker",
-      type: "recordPerformanceMetric",
-      metric: {
-        type: "inferenceError",
-        location: "offscreen",
-        modelType: modelDetails.inferenceTask,
-        durationUntilErrorMs: parseFloat((errorTime - inferenceStartTime).toFixed(2)),
-        error: error.message,
-        stack: error.stack,
-        inputWidth: offscreenCanvas.width,
-        inputHeight: offscreenCanvas.height,
-        fps,
-        tabId: targetTabId
-      }
-    }).catch((e) => console.warn("Error sending inferenceError metric:", e.message));
   }
+}
+function reportPerformance() {
+  if (performanceAggregator.framesInPeriod === 0) return;
+  const now2 = performance.now();
+  const totalTimeSeconds = (now2 - performanceAggregator.lastReportTime) / 1e3;
+  const avgFps = parseFloat((performanceAggregator.framesInPeriod / totalTimeSeconds).toFixed(2));
+  const calculateStats = (arr) => {
+    if (arr.length === 0) return { avg: 0, min: 0, max: 0 };
+    const sum5 = arr.reduce((a, b) => a + b, 0);
+    const avg = sum5 / arr.length;
+    return { avg: parseFloat(avg.toFixed(2)), min: parseFloat(Math.min(...arr).toFixed(2)), max: parseFloat(Math.max(...arr).toFixed(2)) };
+  };
+  const aggregatedMetric = {
+    type: "inference_aggregated",
+    location: "offscreen",
+    modelType: modelDetails.inferenceTask,
+    processing: calculateStats(performanceAggregator.frameDurations),
+    preparation: calculateStats(performanceAggregator.prepDurations),
+    inference: calculateStats(performanceAggregator.inferenceDurations),
+    postProcessing: calculateStats(performanceAggregator.postProcessingDurations),
+    avgFps,
+    framesInPeriod: performanceAggregator.framesInPeriod,
+    durationOfPeriodMs: parseFloat((now2 - performanceAggregator.lastReportTime).toFixed(2)),
+    inputWidth: offscreenCanvas.width,
+    inputHeight: offscreenCanvas.height,
+    tabId: targetTabId
+  };
+  chrome.runtime.sendMessage({ target: "worker", type: "recordPerformanceMetric", metric: aggregatedMetric }).catch((e) => console.warn(e.message));
+  performanceAggregator.frameDurations = [];
+  performanceAggregator.prepDurations = [];
+  performanceAggregator.inferenceDurations = [];
+  performanceAggregator.postProcessingDurations = [];
+  performanceAggregator.framesInPeriod = 0;
+  performanceAggregator.lastReportTime = now2;
 }
 console.log("[Offscreen] Script fully parsed and ready.");
 /*! Bundled license information:

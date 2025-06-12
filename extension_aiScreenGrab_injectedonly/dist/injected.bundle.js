@@ -64615,11 +64615,22 @@ return a / b;`;
       inferenceLoopId: null,
       performanceLog: [],
       offscreenCanvas: new OffscreenCanvas(1, 1),
-      saveLogTimeout: null
+      saveLogTimeout: null,
+      // --- NEW: Performance Aggregation State (1-to-1 with offscreen.js) ---
+      performanceAggregator: {
+        frameDurations: [],
+        prepDurations: [],
+        inferenceDurations: [],
+        postProcessingDurations: [],
+        framesInPeriod: 0,
+        lastReportTime: performance.now(),
+        reportIntervalMs: 1e4
+        // Send a report every 1 second
+      }
     };
     const UI = {};
     function _init() {
-      console.log("DEBUG: _init() - Initializing AI In-Page Extension...");
+      console.log("AI In-Page: Initializing...");
       _injectUI();
       _queryUIElements();
       _bindEventListeners();
@@ -64641,7 +64652,7 @@ return a / b;`;
                 <div class="__extension_aiScreen-overlay"></div>
                 <div class="__extension_aiScreen-rect" data-dragable="true"></div>
                 <div class="__extension_aiScreen-canvasContainer" data-dragable="true">
-                    <div class="__extension_aiScreen-fps"></div>
+                    <div class="__extension_aiScreen-fps">FPS: 0</div>
                     <canvas class="__extension_aiScreen-canvas"></canvas>
                 </div>
             </div>
@@ -64748,7 +64759,8 @@ return a / b;`;
         _updateRectUI(savedRect.x, savedRect.y, savedRect.width, savedRect.height);
         UI.rect.classList.add("active");
       }
-      AppState.performanceLog = (await chrome.storage.local.get("performanceLog"))?.performanceLog || [];
+      const result = await chrome.storage.local.get("performanceLog");
+      AppState.performanceLog = result?.performanceLog || [];
     }
     function _bindEventListeners() {
       UI.predictButton.addEventListener("click", _togglePredictMode);
@@ -64847,10 +64859,11 @@ return a / b;`;
         _updateControlState(false, "Loading model...");
         const modelLoadStart = performance.now();
         AppState.model = await loadModel();
+        const modelLoadEnd = performance.now();
         _recordPerformanceMetric({
           type: "modelLoad",
           location: "injected",
-          durationMs: parseFloat((performance.now() - modelLoadStart).toFixed(2)),
+          durationMs: parseFloat((modelLoadEnd - modelLoadStart).toFixed(2)),
           modelType: AppState.modelDetails.inferenceTask
         });
         console.log("Model loaded successfully.");
@@ -64860,7 +64873,7 @@ return a / b;`;
       } catch (error) {
         console.error("Failed to load model:", error);
         alert(`Error loading model: ${error.message}`);
-        _recordPerformanceMetric({ type: "modelLoadError", location: "injected", error: error.message });
+        _recordPerformanceMetric({ type: "modelLoadError", location: "injected", error: error.message, modelType: AppState.modelDetails?.inferenceTask });
         AppState.model = null;
         _updateControlState(false, "Failed to load model.");
         return false;
@@ -64882,7 +64895,6 @@ return a / b;`;
       }
     }
     async function _startPrediction() {
-      console.log("DEBUG: _startPrediction() called.");
       if (!AppState.model) {
         alert("Please configure and load a model first.");
         _toggleConfigPanel(true);
@@ -64893,15 +64905,12 @@ return a / b;`;
         return;
       }
       try {
-        console.log("DEBUG: Requesting display media...");
         AppState.stream = await navigator.mediaDevices.getDisplayMedia({
           video: { cursor: "never" },
           preferCurrentTab: true,
           audio: false
         });
-        console.log("DEBUG: Stream acquired successfully.");
         AppState.stream.getVideoTracks()[0].onended = () => {
-          console.log("DEBUG: Stream ended by user via 'Stop sharing' button.");
           _stopPrediction();
         };
         const video = AppState.videoElement;
@@ -64910,9 +64919,9 @@ return a / b;`;
         AppState.isPredicting = true;
         UI.predictButton.textContent = "Stop Predictions";
         UI.predictButton.dataset.for = "stop";
+        AppState.performanceAggregator.lastReportTime = performance.now();
         _inferenceLoop();
       } catch (err) {
-        console.error("DEBUG: Error in _startPrediction:", err.name, err.message);
         if (err.name === "NotAllowedError") {
           alert("Screen capture permission was denied.");
         } else {
@@ -64922,8 +64931,11 @@ return a / b;`;
       }
     }
     function _stopPrediction() {
-      console.log("DEBUG: _stopPrediction() called.");
+      if (!AppState.isPredicting) return;
       AppState.isPredicting = false;
+      if (AppState.performanceAggregator.framesInPeriod > 0) {
+        _reportPerformance();
+      }
       if (AppState.stream) {
         AppState.stream.getTracks().forEach((track) => track.stop());
         AppState.stream = null;
@@ -64936,12 +64948,16 @@ return a / b;`;
       UI.predictButton.dataset.for = "start";
     }
     async function _inferenceLoop() {
-      console.log("DEBUG: Starting main prediction loop.");
-      let frameCount = 0;
       let lastFpsTimestamp = performance.now();
-      let currentFps = 0;
+      let frameCountForDisplay = 0;
       while (AppState.isPredicting) {
-        const frameStartTime = performance.now();
+        const frameProcessStartTime = performance.now();
+        frameCountForDisplay++;
+        if (frameProcessStartTime - lastFpsTimestamp >= 1e3) {
+          UI.fps.textContent = `FPS: ${frameCountForDisplay}`;
+          lastFpsTimestamp = frameProcessStartTime;
+          frameCountForDisplay = 0;
+        }
         const vW = AppState.videoElement.videoWidth;
         const vH = AppState.videoElement.videoHeight;
         if (vW === 0 || vH === 0) {
@@ -64960,52 +64976,60 @@ return a / b;`;
         const sy = yRatio * vH;
         const sw = widthRatio * vW;
         const sh = heightRatio * vH;
-        if (sw > 0 && sh > 0) {
-          AppState.offscreenCanvas.width = sw;
-          AppState.offscreenCanvas.height = sh;
-          const ctx = AppState.offscreenCanvas.getContext("2d", { willReadFrequently: true });
-          ctx.drawImage(AppState.videoElement, sx, sy, sw, sh, 0, 0, sw, sh);
-          const imageData = ctx.getImageData(0, 0, sw, sh);
+        if (sw <= 1 || sh <= 1) {
+          await nextFrame2();
+          continue;
+        }
+        ;
+        AppState.offscreenCanvas.width = sw;
+        AppState.offscreenCanvas.height = sh;
+        const drawStartTime = performance.now();
+        const ctx = AppState.offscreenCanvas.getContext("2d", { willReadFrequently: true });
+        ctx.drawImage(AppState.videoElement, sx, sy, sw, sh, 0, 0, sw, sh);
+        const imageData = ctx.getImageData(0, 0, sw, sh);
+        const prepareEndTime = performance.now();
+        const inferenceStartTime = performance.now();
+        try {
           let predictions;
-          const inferenceStartTime = performance.now();
-          try {
-            if (AppState.modelDetails.inferenceTask === "detection") {
-              predictions = await detect(AppState.model, imageData, AppState.modelDetails);
-            } else {
-              predictions = await predict(AppState.model, imageData, AppState.modelDetails.inputShape);
-            }
-          } catch (error) {
-            console.error("DEBUG: Inference failed:", error);
-            _stopPrediction();
-            alert("An error occurred during model inference. Stopping prediction.");
-            break;
+          if (AppState.modelDetails.inferenceTask === "detection") {
+            predictions = await detect(AppState.model, imageData, AppState.modelDetails);
+          } else {
+            predictions = await predict(AppState.model, imageData, AppState.modelDetails.inputShape);
           }
           const inferenceEndTime = performance.now();
-          const inferenceDurationMs = inferenceEndTime - inferenceStartTime;
-          const totalFrameProcessingMs = performance.now() - frameStartTime;
-          frameCount++;
-          const now2 = performance.now();
-          if (now2 - lastFpsTimestamp >= 1e3) {
-            currentFps = frameCount;
-            lastFpsTimestamp = now2;
-            frameCount = 0;
-            UI.fps.textContent = `FPS: ${currentFps}`;
-          }
+          _handlePredictions(predictions, imageData);
+          const postProcessingStartTime = performance.now();
+          const totalFrameMs = inferenceEndTime - frameProcessStartTime;
+          const prepMs = prepareEndTime - drawStartTime;
+          const inferenceMs = inferenceEndTime - inferenceStartTime;
+          const postProcessingMs = postProcessingStartTime - inferenceEndTime;
+          AppState.performanceAggregator.frameDurations.push(totalFrameMs);
+          AppState.performanceAggregator.prepDurations.push(prepMs);
+          AppState.performanceAggregator.inferenceDurations.push(inferenceMs);
+          AppState.performanceAggregator.postProcessingDurations.push(postProcessingMs);
+          AppState.performanceAggregator.framesInPeriod++;
+        } catch (error) {
+          console.error("Inference failed:", error);
           _recordPerformanceMetric({
-            type: "inference",
+            type: "inferenceError",
             location: "injected",
-            durationMs: parseFloat(inferenceDurationMs.toFixed(2)),
-            totalFrameProcessingMs: parseFloat(totalFrameProcessingMs.toFixed(2)),
-            fps: currentFps,
             modelType: AppState.modelDetails.inferenceTask,
+            durationUntilErrorMs: parseFloat((performance.now() - inferenceStartTime).toFixed(2)),
+            error: error.message,
+            stack: error.stack,
             inputWidth: Math.round(sw),
             inputHeight: Math.round(sh)
           });
-          _handlePredictions(predictions, imageData);
+          alert("An error occurred during model inference. Stopping prediction.");
+          _stopPrediction();
+          break;
+        }
+        const now2 = performance.now();
+        if (now2 - AppState.performanceAggregator.lastReportTime >= AppState.performanceAggregator.reportIntervalMs) {
+          _reportPerformance();
         }
         await nextFrame2();
       }
-      console.log("DEBUG: Exited main prediction loop.");
     }
     function _handlePredictions(predictions, imageData) {
       const ctx = UI.canvas.getContext("2d");
@@ -65060,20 +65084,10 @@ return a / b;`;
       UI.overlay.addEventListener("mousedown", onMouseDown);
     }
     function _updateRectState(x, y, w, h) {
-      AppState.mainRect = {
-        x,
-        y,
-        width: w,
-        height: h
-      };
+      AppState.mainRect = { x, y, width: w, height: h };
     }
     function _updateRectUI(x, y, w, h) {
-      Object.assign(UI.rect.style, {
-        left: `${x}px`,
-        top: `${y}px`,
-        width: `${w}px`,
-        height: `${h}px`
-      });
+      Object.assign(UI.rect.style, { left: `${x}px`, top: `${y}px`, width: `${w}px`, height: `${h}px` });
     }
     function _onDragStart(e) {
       e.preventDefault();
@@ -65109,19 +65123,14 @@ return a / b;`;
     }
     function _drawBoundingBox(ctx, left, top, width, height, label, score) {
       ctx.save();
-      let color = "yellow";
-      if (score) {
-        if (score < 0.5) color = "red";
-        else if (score >= 0.75) color = "limegreen";
-      }
+      let color = score < 0.5 ? "red" : score >= 0.75 ? "limegreen" : "yellow";
       ctx.strokeStyle = color;
       ctx.lineWidth = 2;
       ctx.strokeRect(left, top, width, height);
       ctx.font = "14px sans-serif";
       const text = `${label}: ${score.toFixed(2)}`;
       const textMetrics = ctx.measureText(text);
-      const textHeight = 14;
-      const padding = 4;
+      const textHeight = 14, padding = 4;
       ctx.fillStyle = "rgba(0, 0, 0, 0.7)";
       ctx.fillRect(left, top - (textHeight + padding * 2), textMetrics.width + padding * 2, textHeight + padding * 2);
       ctx.fillStyle = color;
@@ -65138,18 +65147,92 @@ return a / b;`;
       clearTimeout(AppState.saveLogTimeout);
       AppState.saveLogTimeout = setTimeout(() => chrome.storage.local.set({
         performanceLog: AppState.performanceLog
-      }), 2e3);
+      }), 5e3);
+    }
+    function _reportPerformance() {
+      const aggregator = AppState.performanceAggregator;
+      if (aggregator.framesInPeriod === 0) return;
+      const now2 = performance.now();
+      const totalTimeSeconds = (now2 - aggregator.lastReportTime) / 1e3;
+      const avgFps = parseFloat((aggregator.framesInPeriod / totalTimeSeconds).toFixed(2));
+      const calculateStats = (arr) => {
+        if (arr.length === 0) return { avg: 0, min: 0, max: 0 };
+        const sum5 = arr.reduce((a, b) => a + b, 0);
+        const avg = sum5 / arr.length;
+        return {
+          avg: parseFloat(avg.toFixed(2)),
+          min: parseFloat(Math.min(...arr).toFixed(2)),
+          max: parseFloat(Math.max(...arr).toFixed(2))
+        };
+      };
+      const aggregatedMetric = {
+        type: "inference_aggregated",
+        location: "injected",
+        modelType: AppState.modelDetails.inferenceTask,
+        processing: calculateStats(aggregator.frameDurations),
+        preparation: calculateStats(aggregator.prepDurations),
+        inference: calculateStats(aggregator.inferenceDurations),
+        postProcessing: calculateStats(aggregator.postProcessingDurations),
+        avgFps,
+        framesInPeriod: aggregator.framesInPeriod,
+        durationOfPeriodMs: parseFloat((now2 - aggregator.lastReportTime).toFixed(2)),
+        inputWidth: AppState.offscreenCanvas.width,
+        inputHeight: AppState.offscreenCanvas.height
+      };
+      _recordPerformanceMetric(aggregatedMetric);
+      aggregator.frameDurations = [];
+      aggregator.prepDurations = [];
+      aggregator.inferenceDurations = [];
+      aggregator.postProcessingDurations = [];
+      aggregator.framesInPeriod = 0;
+      aggregator.lastReportTime = now2;
     }
     function _exportPerformanceData() {
       if (!AppState.performanceLog || AppState.performanceLog.length === 0) {
         alert("No performance data to export.");
         return;
       }
-      let headers = /* @__PURE__ */ new Set();
-      AppState.performanceLog.forEach((row) => Object.keys(row).forEach((key) => headers.add(key)));
-      const sortedHeaders = Array.from(headers);
+      const flattenObject = (obj, prefix = "") => Object.keys(obj).reduce((acc, k) => {
+        const pre = prefix.length ? prefix + "_" : "";
+        if (typeof obj[k] === "object" && obj[k] !== null && !Array.isArray(obj[k])) {
+          Object.assign(acc, flattenObject(obj[k], pre + k));
+        } else {
+          acc[pre + k] = obj[k];
+        }
+        return acc;
+      }, {});
+      const flattenedData = AppState.performanceLog.map((row) => flattenObject(row));
+      const headers = [...new Set(flattenedData.flatMap((row) => Object.keys(row)))];
+      const preferredOrder = [
+        "datetime",
+        "timestamp",
+        "type",
+        "location",
+        "avgFps",
+        "framesInPeriod",
+        "durationOfPeriodMs",
+        "processing_avg",
+        "processing_min",
+        "processing_max",
+        "inference_avg",
+        "inference_min",
+        "inference_max",
+        "preparation_avg",
+        "preparation_min",
+        "preparation_max",
+        "postProcessing_avg",
+        "postProcessing_min",
+        "postProcessing_max",
+        "durationMs",
+        "modelType",
+        "inputWidth",
+        "inputHeight",
+        "error",
+        "stack"
+      ];
+      const sortedHeaders = preferredOrder.filter((h) => headers.includes(h)).concat(headers.filter((h) => !preferredOrder.includes(h)).sort());
       const csvRows = [sortedHeaders.join(",")];
-      for (const row of AppState.performanceLog) {
+      for (const row of flattenedData) {
         const values = sortedHeaders.map((header) => {
           const value = row[header] === void 0 || row[header] === null ? "" : row[header];
           let escaped = ("" + value).replace(/"/g, '""');
@@ -65161,14 +65244,11 @@ return a / b;`;
         csvRows.push(values.join(","));
       }
       const csvString = csvRows.join("\n");
-      const blob = new Blob([csvString], {
-        type: "text/csv;charset=utf-8;"
-      });
+      const blob = new Blob([csvString], { type: "text/csv;charset=utf-8;" });
       const link = document.createElement("a");
       const url = URL.createObjectURL(blob);
       link.setAttribute("href", url);
-      const filename = `performance_log_${(/* @__PURE__ */ new Date()).toISOString().slice(0, 19).replace(/:/g, "-")}.csv`;
-      link.setAttribute("download", filename);
+      link.setAttribute("download", `performance_log_injected_${(/* @__PURE__ */ new Date()).toISOString().slice(0, 19).replace(/:/g, "-")}.csv`);
       link.style.visibility = "hidden";
       document.body.appendChild(link);
       link.click();
@@ -65177,7 +65257,7 @@ return a / b;`;
       alert("Performance data exported.");
     }
     async function _clearPerformanceData() {
-      if (confirm("Are you sure you want to clear all performance data?")) {
+      if (confirm("Are you sure you want to clear all performance data? This action cannot be undone.")) {
         AppState.performanceLog = [];
         await chrome.storage.local.remove("performanceLog");
         alert("Performance data cleared.");

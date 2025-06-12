@@ -64343,7 +64343,6 @@ chrome.action.onClicked.addListener(async (tab) => {
       console.log("[ServiceWorker] Attempting to create offscreen document.");
       await chrome.offscreen.createDocument({
         url: "offscreen.html",
-        // Ensure this is bundled to dist/offscreen.html or adjust path
         reasons: ["DISPLAY_MEDIA"],
         justification: "Capture tab stream and run model inference"
       });
@@ -64465,27 +64464,39 @@ chrome.action.onClicked.addListener(async (tab) => {
       try {
         await chrome.runtime.sendMessage({ type: "releaseStream", target: "offscreen" });
       } catch (e) {
-        console.warn(`[ServiceWorker] Could not send releaseStream to offscreen: ${e.message}. It might not exist yet.`);
+        console.warn(`[ServiceWorker] Could not send releaseStream to offscreen: ${e.message}.`);
       }
     }
     console.log(`[ServiceWorker] Attempting to get media stream ID for tab ${currentTabId}`);
     streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: currentTabId });
     await chrome.storage.local.set({ streamId });
     console.log(`[ServiceWorker] Obtained stream ID ${streamId} for tab ${currentTabId}`);
+    let viewportSize = null;
+    try {
+      console.log(`[ServiceWorker] Querying tab ${currentTabId} for viewport size.`);
+      viewportSize = await chrome.tabs.sendMessage(currentTabId, { type: "getViewportSize" });
+      if (!viewportSize || !viewportSize.width) {
+        console.warn(`[ServiceWorker] Did not receive valid viewport size from tab ${currentTabId}.`);
+        viewportSize = null;
+      } else {
+        console.log(`[ServiceWorker] Received viewport size:`, viewportSize);
+      }
+    } catch (e) {
+      console.error(`[ServiceWorker] Failed to get viewport size from content script for tab ${currentTabId}:`, e.message);
+    }
     try {
       console.log(`[ServiceWorker] Attempting to send 'streamStart' to offscreen for tab ${currentTabId}`);
-      await chrome.runtime.sendMessage({ type: "streamStart", target: "offscreen", streamId, targetTabId: currentTabId });
+      await chrome.runtime.sendMessage({
+        type: "streamStart",
+        target: "offscreen",
+        streamId,
+        targetTabId: currentTabId,
+        viewportSize
+        // This will be the object {width, height} or null
+      });
       console.log(`[ServiceWorker] Successfully sent 'streamStart' to offscreen for tab ${currentTabId}`);
     } catch (e) {
       console.error(`[ServiceWorker] Error sending 'streamStart' to offscreen for tab ${currentTabId}:`, e);
-      recordPerformanceMetric({
-        type: "messageError",
-        location: "service-worker",
-        messageType: "streamStart",
-        targetComponent: "offscreen",
-        error: e.message,
-        tabId: currentTabId
-      });
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
     try {

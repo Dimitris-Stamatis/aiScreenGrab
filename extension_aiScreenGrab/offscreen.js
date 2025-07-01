@@ -1,4 +1,4 @@
-// offscreen.js
+// offscreen.js test
 import { predict, loadModel, detect } from "./utils/modelHelpers.mjs";
 
 console.log("Offscreen script loaded");

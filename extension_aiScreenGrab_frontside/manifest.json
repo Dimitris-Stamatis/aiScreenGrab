@@ -1,0 +1,32 @@
+{
+  "manifest_version": 3,
+  "name": "AI Model In-Window (Injected Only)",
+  "version": "1.0",
+  "description": "Choose area of interest and run AI model on it (all in the injected script).",
+  "permissions": [
+    "scripting",
+    "activeTab",
+    "storage",
+    "tabs"
+  ],
+  "background": {
+    "service_worker": "dist/service-worker.bundle.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "AI Model In-Window"
+  },
+  "host_permissions": [
+    "*://*/*"
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "icons/*.svg",
+        "dist/utils/indexedDB.bundle.js",
+        "dist/utils/modelHelpers.bundle.js"
+      ],
+      "matches": [ "<all_urls>" ]
+    }
+  ]
+}

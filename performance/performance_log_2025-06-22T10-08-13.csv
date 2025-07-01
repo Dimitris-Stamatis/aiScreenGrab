@@ -1,0 +1,15 @@
+datetime,timestamp,type,location,avgFps,framesInPeriod,durationOfPeriodMs,processing_avg,processing_min,processing_max,inference_avg,inference_min,inference_max,preparation_avg,preparation_min,preparation_max,postProcessing_avg,postProcessing_min,postProcessing_max,modelType,inputWidth,inputHeight,tabId,durationMs
+2025-06-22T10:05:49.389Z,1750586749389,modelLoad,service-worker,,,,,,,,,,,,,,,,classification,,,,1736.9
+2025-06-22T10:06:15.497Z,1750586775497,inference_aggregated,offscreen,3.97,40,10082.1,242.48,85.5,5255.5,182.05,37.5,5156.3,6.33,3.8,11.4,0.28,0,2,classification,736,736,866040862,
+2025-06-22T10:06:25.567Z,1750586785567,inference_aggregated,offscreen,9.14,92,10070.6,105.48,78.8,184.7,44.67,31.8,69,6.1,3.8,10.1,0.14,0,0.5,classification,736,736,866040862,
+2025-06-22T10:06:35.624Z,1750586795624,inference_aggregated,offscreen,8.95,90,10054.4,107.03,79.9,179.9,43.5,30,71.6,6.28,3.9,10,0.17,0,0.7,classification,736,736,866040862,
+2025-06-22T10:06:45.639Z,1750586805639,inference_aggregated,offscreen,8.79,88,10016.2,109.11,79.6,348,45.65,30.9,262.6,6.36,4.2,11.4,0.21,0,2.3,classification,736,736,866040862,
+2025-06-22T10:06:55.641Z,1750586815641,inference_aggregated,offscreen,9.1,91,10003,105.38,78.4,185.9,41.01,30.4,58.1,6.5,3.9,10.8,0.16,0,0.8,classification,736,736,866040862,
+2025-06-22T10:07:05.756Z,1750586825756,inference_aggregated,offscreen,8.9,90,10116,106.96,79.3,177.5,41.89,30.4,69.8,6.06,3.7,9,0.2,0,1.4,classification,736,736,866040862,
+2025-06-22T10:07:15.823Z,1750586835823,inference_aggregated,offscreen,9.34,94,10067.5,103.42,83.9,174.3,42,31.6,79.3,6.58,3.6,11.1,0.17,0,0.6,classification,736,736,866040862,
+2025-06-22T10:07:25.990Z,1750586845990,inference_aggregated,offscreen,9.15,93,10166.1,103.93,80.8,177.9,41.47,31.4,72,6.06,3.6,10.1,0.16,0,0.5,classification,736,736,866040862,
+2025-06-22T10:07:36.091Z,1750586856091,inference_aggregated,offscreen,9.11,92,10097.2,105.89,77,183.1,44.6,29.4,91.5,6.38,4.3,10.7,0.18,0,0.9,classification,736,736,866040862,
+2025-06-22T10:07:46.096Z,1750586866096,inference_aggregated,offscreen,9.39,94,10009.5,102.17,78.9,177.9,43.6,28.6,80.2,6,4.3,9.7,0.21,0,2.6,classification,736,736,866040862,
+2025-06-22T10:07:56.105Z,1750586876105,inference_aggregated,offscreen,9.59,96,10008.7,99.56,81.2,169.7,42.25,30.1,87.6,6.07,3.8,9.3,0.17,0,0.8,classification,736,736,866040862,
+2025-06-22T10:08:06.128Z,1750586886128,inference_aggregated,offscreen,9.78,98,10021.8,97.7,81.1,176.9,43.25,30.3,82.1,6.19,3.9,10.2,0.14,0,0.5,classification,736,736,866040862,
+2025-06-22T10:08:08.162Z,1750586888162,inference_aggregated,offscreen,9.35,19,2031.1,102.81,79.7,191.1,46.3,33.5,94.2,5.62,3.8,8.2,0.15,0,0.5,classification,736,736,866040862,

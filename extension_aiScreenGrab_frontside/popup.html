@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <title>In-Window AI Model Prediction</title>
+    <link rel="stylesheet" href="popup.css" /> <!-- Ensure you have popup.css or remove this line -->
+    <style>
+        body { font-family: sans-serif; padding: 10px; width: 550px; }
+        fieldset { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 8px; }
+        input[type="text"], input[type="number"], select, input[type="file"] {
+            width: calc(100% - 10px);
+            padding: 5px;
+            margin-bottom: 5px;
+        }
+        small { display: block; font-size: 0.8em; color: #555; margin-bottom: 10px; }
+        button { padding: 8px 12px; margin-right: 10px; }
+        .selectedFiles ul { list-style: none; padding-left: 0; }
+        #detectionOptions legend, fieldset > legend { font-weight: bold; margin-bottom: 5px;}
+        /* Basic styling for buttons */
+        .button-group button { margin-top: 5px; }
+    </style>
+</head>
+
+<body>
+    <h1>AI Model Prediction</h1>
+
+    <form id="modelDetails">
+        <fieldset>
+            <legend>1. Upload Model</legend>
+            <label>
+                Model files (.json, .bin, .txt, .labels, etc.)
+                <input type="file" id="modelFiles" name="modelFiles" multiple accept="*" />
+            </label>
+            <div class="selectedFiles">
+                <ul id="modelFilesList"></ul>
+            </div>
+        </fieldset>
+
+        <fieldset>
+            <legend>2. Configuration</legend>
+            <label>
+                Inference task
+                <select id="inferenceTask" name="inferenceTask">
+                    <option value="classification">Image Classification</option>
+                    <option value="detection">Object Detection</option>
+                </select>
+                <small>Choose whether you want class probabilities or bounding boxes.</small>
+            </label>
+            <label>
+                Labels format
+                <select id="labelsFormat" name="labelsFormat">
+                    <option value="simpletext">Line by line text (e.g., labels.txt)</option>
+                    <option value="simpletextwithindex">Line by line text with indexes (e.g., 0 label_a)</option>
+                    <option value="json">JSON (e.g., labels.json as array or object)</option>
+                </select>
+            </label>
+            <label>
+                Labels Separator (for 'Line by line text with indexes')
+                <input type="text" id="labelsSeparator" name="labelsSeparator" placeholder="Default is space (e.g., '0 label')" value=" "/>
+                <small>Character separating index and label. E.g., a space for "0 mylabel".</small>
+            </label>
+        </fieldset>
+
+        <fieldset>
+            <legend>3. Input & Output</legend>
+            <label>
+                Input shape (Height x Width)
+                <input type="text" id="inputShape" name="inputShape" placeholder="e.g. 224x224" required />
+                <small>Target HxW for resizing the input image before inference.</small>
+            </label>
+            
+            <legend>Output Matching (for TF GraphModel .pb, if non-standard names)</legend>
+            <small>Optional. Match output tensor names from model signature if they differ from common names used by the 'detect' function.</small>
+            <label>
+                Number of detections Output Name
+                <input type="text" id="numDetections" name="numDetections" placeholder="Default: num_detections" />
+            </label>
+            <label>
+                Detection boxes Output Name
+                <input type="text" id="detectionBoxes" name="detectionBoxes" placeholder="Default: detection_boxes" />
+            </label>
+            <label>
+                Scores Output Name
+                <input type="text" id="scores" name="scores" placeholder="Default: detection_scores or Identity_4:0" />
+            </label>
+            <label>
+                Class Names/IDs Output Name
+                <input type="text" id="classNames" name="classNames" placeholder="Default: detection_classes or Identity_2:0" />
+            </label>
+        </fieldset>
+
+        <fieldset id="detectionOptions" hidden>
+            <legend>4. Detection Settings (if task is Object Detection)</legend>
+            <label>
+                Score threshold
+                <input type="number" id="scoreThreshold" name="scoreThreshold" min="0" max="1" step="0.01" value="0.5" />
+                <small>Ignore detected boxes with confidence score below this threshold.</small>
+            </label>
+            <label>
+                Max detections
+                <input type="number" id="maxDetections" name="maxDetections" min="1" step="1" value="20" />
+                <small>Maximum number of bounding boxes to return after filtering by score.</small>
+            </label>
+        </fieldset>
+
+        <button type="submit">Save Configuration</button>
+    </form>
+
+    <fieldset>
+        <legend>Performance Data</legend>
+        <div class="button-group">
+            <button type="button" id="exportPerformanceButton">Export Performance Data (CSV)</button>
+            <button type="button" id="clearPerformanceButton">Clear Performance Data</button>
+        </div>
+    </fieldset>
+
+    <script type="module" src="popup.mjs"></script>
+</body>
+</html>

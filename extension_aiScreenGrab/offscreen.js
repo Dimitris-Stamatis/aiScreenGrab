@@ -221,11 +221,11 @@ async function processFrame() {
   // --- MODIFICATION: "TWO CANVAS" DOWNSCALING AND CROPPING LOGIC ---
 
   // 1. Ensure our viewport-sized canvas is the correct size.
-  viewportCanvas.width = lastKnownViewportSize.width;
+  /*viewportCanvas.width = lastKnownViewportSize.width;
   viewportCanvas.height = lastKnownViewportSize.height;
 
   // 2. Downscale the entire high-resolution video onto the smaller viewportCanvas.
-  viewportCtx.drawImage(video, 0, 0, viewportCanvas.width, viewportCanvas.height);
+  viewportCtx.drawImage(video, 0, 0, viewportCanvas.width, viewportCanvas.height);*/
 
   // 3. Define the crop area based on the on-screen rectangle's pixel values.
   //    The proportional math is no longer needed as we are cropping from a source
@@ -243,8 +243,8 @@ async function processFrame() {
 
   // 5. Crop FROM the viewportCanvas ONTO the final offscreenCanvas.
   const drawStartTime = performance.now();
-  ctx.drawImage(viewportCanvas, sx, sy, sw, sh, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
-  const imageData = ctx.getImageData(0, 0, offscreenCanvas.width, offscreenCanvas.height);
+  ctx.drawImage(video, sx, sy, sw, sh, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
+  //const imageData = ctx.getImageData(0, 0, offscreenCanvas.width, offscreenCanvas.height);
   const prepareEndTime = performance.now();
   // --- END MODIFICATION ---
 
@@ -252,9 +252,9 @@ async function processFrame() {
   try {
     let predictions;
     if (modelDetails.inferenceTask === 'detection') {
-      predictions = await detect(modelLoaded, imageData, modelDetails);
+      predictions = await detect(modelLoaded, offscreenCanvas, modelDetails);
     } else {
-      predictions = await predict(modelLoaded, imageData, modelDetails.inputShape, 5);
+      predictions = await predict(modelLoaded, offscreenCanvas, modelDetails.inputShape, 5);
     }
     const inferenceEndTime = performance.now();
 
@@ -265,7 +265,7 @@ async function processFrame() {
         target: 'worker',
         targetTabId,
         fps,
-      }).catch(e => { /* Ignore */ });
+      }).catch(e => {});
 
       const messageSentTime = performance.now();
       performanceAggregator.frameDurations.push(inferenceEndTime - frameProcessStartTime);

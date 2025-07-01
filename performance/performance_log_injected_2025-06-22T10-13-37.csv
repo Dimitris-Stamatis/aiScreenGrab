@@ -1,0 +1,15 @@
+datetime,timestamp,type,location,avgFps,framesInPeriod,durationOfPeriodMs,processing_avg,processing_min,processing_max,inference_avg,inference_min,inference_max,preparation_avg,preparation_min,preparation_max,postProcessing_avg,postProcessing_min,postProcessing_max,durationMs,modelType,inputWidth,inputHeight
+2025-06-22T10:11:13.353Z,1750587073353,modelLoad,injected,,,,,,,,,,,,,,,,286.2,classification,,
+2025-06-22T10:11:35.848Z,1750587095848,inference_aggregated,injected,9.15,92,10054.1,103.96,58.8,2232.7,75.47,36.3,2172.7,27.86,20.7,59.7,0.68,0.3,4.3,,classification,741,736
+2025-06-22T10:11:45.891Z,1750587105891,inference_aggregated,injected,12.55,126,10042.4,74.66,54.8,150,46.89,30.2,109.9,27.15,20.6,49.5,0.63,0.2,1.7,,classification,741,736
+2025-06-22T10:11:55.951Z,1750587115951,inference_aggregated,injected,12.72,128,10060.3,73.36,52.7,152.6,45.85,29,109.9,26.86,20.1,50.9,0.69,0.2,4.8,,classification,741,736
+2025-06-22T10:12:06.000Z,1750587126000,inference_aggregated,injected,12.94,130,10049.4,72.84,55.2,140.2,44.38,27.3,95.4,27.79,19.7,67.9,0.68,0.2,4,,classification,741,736
+2025-06-22T10:12:16.020Z,1750587136020,inference_aggregated,injected,12.57,126,10020.1,75.07,52.1,144.8,45.94,29.4,99.4,28.45,20.3,95.6,0.7,0.2,5.9,,classification,741,736
+2025-06-22T10:12:26.034Z,1750587146034,inference_aggregated,injected,12.28,123,10014.2,76.31,55.3,145.9,45.66,32.2,100.4,29.82,20.5,92.9,0.65,0.3,2.1,,classification,741,736
+2025-06-22T10:12:36.042Z,1750587156042,inference_aggregated,injected,12.59,126,10005.2,74.44,54.6,136.7,44.68,30.7,94.8,29.04,20.5,80.3,0.6,0.2,1.8,,classification,741,736
+2025-06-22T10:12:46.045Z,1750587166045,inference_aggregated,injected,12.09,121,10005.2,77.51,56,140.7,46.2,31.3,94.7,30.57,21.4,97.6,0.72,0.2,4.6,,classification,741,736
+2025-06-22T10:12:56.049Z,1750587176049,inference_aggregated,injected,12.29,123,10004.6,76.17,54.4,150.6,44.98,30.4,108.3,30.41,19.9,88.6,0.64,0.3,2.1,,classification,741,736
+2025-06-22T10:13:06.083Z,1750587186083,inference_aggregated,injected,12.66,127,10033.6,73.66,53.7,128.9,43.97,27.7,85.3,29.02,20.6,84,0.65,0.2,2.4,,classification,741,736
+2025-06-22T10:13:16.140Z,1750587196140,inference_aggregated,injected,12.53,126,10057.2,74.44,54,157.1,44.27,27.6,83.4,29.45,20.6,89,0.68,0.2,3.2,,classification,741,736
+2025-06-22T10:13:26.201Z,1750587206201,inference_aggregated,injected,11.83,119,10060.9,78.9,56.4,156.8,46.71,29.5,119.6,31.43,21,85.3,0.61,0.2,1.5,,classification,741,736
+2025-06-22T10:13:29.806Z,1750587209806,inference_aggregated,injected,12.2,44,3605.6,76.1,56.8,157.8,46.31,33.2,104.2,29.12,21.2,81,0.64,0.2,3.4,,classification,741,736

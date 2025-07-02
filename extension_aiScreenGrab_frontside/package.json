@@ -1,6 +1,0 @@
-{
-  "dependencies": {
-    "@tensorflow/tfjs": "^4.22.0",
-    "esbuild": "^0.25.3"
-  }
-}

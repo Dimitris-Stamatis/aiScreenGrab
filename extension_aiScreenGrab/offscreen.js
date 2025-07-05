@@ -106,6 +106,8 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
       if (message.layoutSize) {
         lastKnownViewportSize = message.layoutSize;
       }
+      offscreenCanvas.width = Math.floor(rect.width);
+      offscreenCanvas.height = Math.floor(rect.height);
       break;
 
     case 'streamStart':
@@ -197,7 +199,7 @@ function predictionLoop() {
   processFrame().finally(() => {
     isProcessingFrame = false;
     // Schedule the next iteration of the loop to run as soon as possible.
-    loopTimeoutId = setTimeout(predictionLoop, 0);
+    loopTimeoutId = setTimeout(predictionLoop, 1);
   });
 
   // Performance reporting is now independent of the main loop timing
@@ -209,7 +211,7 @@ function predictionLoop() {
 
 async function processFrame() {
   if (!modelLoaded || !video.srcObject || video.paused || video.videoWidth === 0 || !lastKnownViewportSize) {
-    await new Promise(resolve => setTimeout(resolve, 100));
+    await new Promise(resolve => setTimeout(resolve, 1));
     return;
   }
 
@@ -238,12 +240,12 @@ async function processFrame() {
   if (sw <= 1 || sh <= 1) return;
 
   // 4. Resize the final canvas (for the model) to the size of the on-screen selection.
-  offscreenCanvas.width = Math.floor(sw);
-  offscreenCanvas.height = Math.floor(sh);
+  //offscreenCanvas.width = Math.floor(sw);
+  //offscreenCanvas.height = Math.floor(sh);
 
   // 5. Crop FROM the viewportCanvas ONTO the final offscreenCanvas.
   const drawStartTime = performance.now();
-  ctx.drawImage(video, sx, sy, sw, sh, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
+  //ctx.drawImage(video, sx, sy, sw, sh, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
   //const imageData = ctx.getImageData(0, 0, offscreenCanvas.width, offscreenCanvas.height);
   const prepareEndTime = performance.now();
   // --- END MODIFICATION ---
@@ -252,9 +254,9 @@ async function processFrame() {
   try {
     let predictions;
     if (modelDetails.inferenceTask === 'detection') {
-      predictions = await detect(modelLoaded, offscreenCanvas, modelDetails);
+      predictions = await detect(modelLoaded, video, modelDetails);
     } else {
-      predictions = await predict(modelLoaded, offscreenCanvas, modelDetails.inputShape, 5);
+      predictions = await predict(modelLoaded, video, modelDetails.inputShape, 5);
     }
     const inferenceEndTime = performance.now();
 

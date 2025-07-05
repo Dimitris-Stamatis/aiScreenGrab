@@ -64666,6 +64666,8 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
       if (message.layoutSize) {
         lastKnownViewportSize = message.layoutSize;
       }
+      offscreenCanvas.width = Math.floor(rect.width);
+      offscreenCanvas.height = Math.floor(rect.height);
       break;
     case "streamStart":
       console.log("[Offscreen] streamStart received for tab:", message.targetTabId);
@@ -64735,7 +64737,7 @@ function predictionLoop() {
   isProcessingFrame = true;
   processFrame().finally(() => {
     isProcessingFrame = false;
-    loopTimeoutId = setTimeout(predictionLoop, 0);
+    loopTimeoutId = setTimeout(predictionLoop, 1);
   });
   const now2 = performance.now();
   if (now2 - performanceAggregator.lastReportTime >= performanceAggregator.reportIntervalMs) {
@@ -64744,7 +64746,7 @@ function predictionLoop() {
 }
 async function processFrame() {
   if (!modelLoaded || !video.srcObject || video.paused || video.videoWidth === 0 || !lastKnownViewportSize) {
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await new Promise((resolve) => setTimeout(resolve, 1));
     return;
   }
   const frameProcessStartTime = performance.now();
@@ -64756,18 +64758,15 @@ async function processFrame() {
   const sw = rect.width;
   const sh = rect.height;
   if (sw <= 1 || sh <= 1) return;
-  offscreenCanvas.width = Math.floor(sw);
-  offscreenCanvas.height = Math.floor(sh);
   const drawStartTime = performance.now();
-  ctx.drawImage(video, sx, sy, sw, sh, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
   const prepareEndTime = performance.now();
   const inferenceStartTime = performance.now();
   try {
     let predictions;
     if (modelDetails.inferenceTask === "detection") {
-      predictions = await detect(modelLoaded, offscreenCanvas, modelDetails);
+      predictions = await detect(modelLoaded, video, modelDetails);
     } else {
-      predictions = await predict(modelLoaded, offscreenCanvas, modelDetails.inputShape, 5);
+      predictions = await predict(modelLoaded, video, modelDetails.inputShape, 5);
     }
     const inferenceEndTime = performance.now();
     if (sendframesstatus && targetTabId) {

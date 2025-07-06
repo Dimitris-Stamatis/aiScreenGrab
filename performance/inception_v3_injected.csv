@@ -1,0 +1,8 @@
+datetime,timestamp,type,location,avgFps,framesInPeriod,durationOfPeriodMs,processing_avg,processing_min,processing_max,inference_avg,inference_min,inference_max,preparation_avg,preparation_min,preparation_max,postProcessing_avg,postProcessing_min,postProcessing_max,durationMs,modelType,inputWidth,inputHeight
+2025-07-06T17:10:12.972Z,1751821812972,inference_aggregated,injected,4.01,41,10226.1,240,166.6,1014.7,175.34,130,949.4,62.91,28.9,119.3,1.06,0.4,2.9,,classification,741,736
+2025-07-06T17:10:33.253Z,1751821833253,inference_aggregated,injected,4.09,42,10263.7,231.68,178.4,338.6,160.51,133.9,237.3,69.49,30.6,136.2,1.32,0.4,3.6,,classification,741,736
+2025-07-06T17:10:43.430Z,1751821843430,inference_aggregated,injected,4.23,43,10176.4,227.77,168.9,287.2,154.43,130.3,198.6,71.64,29.1,125.5,1.5,0.6,4.4,,classification,741,736
+2025-07-06T17:10:53.675Z,1751821853675,inference_aggregated,injected,4.2,43,10245.1,227.69,186.5,285.1,156.73,134.7,188,69.41,39.8,109.5,1.2,0.5,3.1,,classification,741,736
+2025-07-06T17:11:03.833Z,1751821863833,inference_aggregated,injected,4.04,41,10159.3,238.35,173.9,312,158.91,135.8,229.3,77.51,33.4,116.8,1.49,0.6,4.8,,classification,741,736
+2025-07-06T17:11:11.837Z,1751821871837,inference_aggregated,injected,4.12,33,8003.6,227.99,160.4,295,163.05,131,240.2,62.46,25.2,101.9,1.15,0.4,2.9,,classification,741,736
+,,,,4.115,40.5,9845.7,232.246666666667,172.45,422.1,161.495,132.616666666667,340.466666666667,68.9033333333333,31.1666666666667,118.2,1.28666666666667,0.483333333333333,3.61666666666667,,,,

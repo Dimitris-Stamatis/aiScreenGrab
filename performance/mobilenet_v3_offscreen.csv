@@ -1,0 +1,7 @@
+datetime,timestamp,type,location,avgFps,framesInPeriod,durationOfPeriodMs,processing_avg,processing_min,processing_max,inference_avg,inference_min,inference_max,preparation_avg,preparation_min,preparation_max,postProcessing_avg,postProcessing_min,postProcessing_max,modelType,inputWidth,inputHeight,tabId,durationMs
+2025-07-06T17:20:23.778Z,1751822423778,inference_aggregated,offscreen,0.81,9,11101.6,1233.33,1183.4,1317,1206.91,1161,1277.3,26.41,17.6,39.7,0.12,0.1,0.2,detection,735,735,866042935,
+2025-07-06T17:20:34.173Z,1751822434173,inference_aggregated,offscreen,0.77,8,10394.6,1299.11,1175.9,1520.9,1277.93,1154.5,1499,21.19,17.6,24.5,0.11,0,0.4,detection,735,735,866042935,
+2025-07-06T17:20:45.194Z,1751822445194,inference_aggregated,offscreen,0.82,9,11022.1,1224.42,1124.3,1378.8,1195.31,1105.5,1321.5,29.11,18.4,72.9,0.18,0,0.7,detection,735,735,866042935,
+2025-07-06T17:20:56.172Z,1751822456172,inference_aggregated,offscreen,0.82,9,10976.4,1219.38,1081.8,1360.8,1190.03,1056.7,1324.2,29.31,18.1,41.7,0.19,0.1,0.4,detection,735,735,866042935,
+2025-07-06T17:21:06.049Z,1751822466049,inference_aggregated,offscreen,0.81,8,9877.4,1178.47,1037.6,1288.9,1154.91,1019.6,1257.1,23.56,17.6,34.9,0.09,0,0.2,detection,735,735,866042935,
+,,,,0.806,8.6,10674.42,1230.942,1120.6,1373.28,1205.018,1099.46,1335.82,25.916,17.86,42.74,0.138,0.04,0.38,,,,,

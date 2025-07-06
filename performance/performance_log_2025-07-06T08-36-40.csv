@@ -1,0 +1,8 @@
+datetime,timestamp,type,location,avgFps,framesInPeriod,durationOfPeriodMs,processing_avg,processing_min,processing_max,inference_avg,inference_min,inference_max,preparation_avg,preparation_min,preparation_max,postProcessing_avg,postProcessing_min,postProcessing_max,modelType,inputWidth,inputHeight,tabId
+2025-07-06T08:30:30.418Z,1751790630418,inference_aggregated,offscreen,3.99,40,10015.5,249.85,109.1,1154.5,189.37,63.7,1141.3,60.47,13.1,158.8,0.49,0.1,2.5,classification,981,981,866042935
+2025-07-06T08:30:40.607Z,1751790640607,inference_aggregated,offscreen,6.08,62,10192.9,164.08,112.3,461.5,109.38,61.5,366.2,54.69,36.5,95.3,0.3,0,2.9,classification,981,981,866042935
+2025-07-06T08:30:50.719Z,1751790650719,inference_aggregated,offscreen,9.99,101,10111.3,99.91,74.2,183.1,57.73,40.1,122.1,42.18,27.1,61,0.19,0,1.9,classification,981,981,866042935
+2025-07-06T08:31:00.800Z,1751790660800,inference_aggregated,offscreen,9.72,98,10080.6,102.68,74.5,351.6,61.08,36.6,292,41.6,26.8,84.5,0.18,0,2.2,classification,981,981,866042935
+2025-07-06T08:31:10.855Z,1751790670855,inference_aggregated,offscreen,6.46,65,10054.9,154.46,78.2,263.1,90.27,38.1,159,64.18,27.2,120.5,0.22,0,3.5,classification,981,981,866042935
+2025-07-06T08:31:20.932Z,1751790680932,inference_aggregated,offscreen,9.03,91,10075.2,110.49,76.6,255.3,66.49,35.3,189.1,43.99,28.2,69.7,0.23,0,2.5,classification,981,981,866042935
+2025-07-06T08:31:22.794Z,1751790682794,inference_aggregated,offscreen,6.97,13,1864.7,135.68,79,287,85.16,45.2,196.6,50.52,30.6,90.4,0.33,0.1,2.2,classification,981,981,866042935

@@ -64593,10 +64593,8 @@ var modelDetails = null;
 var targetTabId = null;
 var layoutWidth = null;
 var layoutHeight = null;
-var loopTimeoutId = null;
-var isProcessingFrame = false;
+var isLoopRunning = false;
 var lastKnownViewportSize = null;
-var sendframesstatus = false;
 var lastFrameTime = performance.now();
 var fps = 0;
 var performanceAggregator = {
@@ -64671,7 +64669,7 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
       break;
     case "streamStart":
       console.log("[Offscreen] streamStart received for tab:", message.targetTabId);
-      sendframesstatus = false;
+      isLoopRunning = false;
       targetTabId = message.targetTabId;
       if (stream) {
         stream.getTracks().forEach((track) => track.stop());
@@ -64681,7 +64679,13 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
           video: {
             mandatory: {
               chromeMediaSource: "tab",
-              chromeMediaSourceId: message.streamId
+              chromeMediaSourceId: message.streamId,
+              width: { ideal: 960 },
+              // Adjust as needed
+              height: { ideal: 540 },
+              // Adjust as needed
+              frameRate: { ideal: 30 }
+              // Adjust as needed
             }
           }
         });
@@ -64705,88 +64709,73 @@ video.addEventListener("loadedmetadata", () => {
 });
 video.addEventListener("pause", () => {
   console.log("[Offscreen] Video paused, ensuring prediction loop stops.");
-  sendframesstatus = false;
+  stopPredictionLoop();
 });
 function startPredictionLoop() {
-  if (sendframesstatus) return;
+  if (isLoopRunning) {
+    console.log("[Offscreen] Prediction loop is already running.");
+    return;
+  }
   console.log("[Offscreen] Starting prediction loop.");
-  sendframesstatus = true;
-  isProcessingFrame = false;
+  isLoopRunning = true;
   performanceAggregator.lastReportTime = performance.now();
   predictionLoop();
 }
 function stopPredictionLoop() {
-  if (!sendframesstatus) return;
+  if (!isLoopRunning) return;
   console.log("[Offscreen] Stopping prediction loop.");
-  sendframesstatus = false;
-  if (loopTimeoutId) {
-    clearTimeout(loopTimeoutId);
-  }
+  isLoopRunning = false;
   if (performanceAggregator.framesInPeriod > 0) {
     reportPerformance();
   }
 }
-function predictionLoop() {
-  if (!sendframesstatus) {
-    console.log("[Offscreen] Prediction loop has fully stopped.");
-    return;
-  }
-  if (isProcessingFrame) {
-    return;
-  }
-  isProcessingFrame = true;
-  processFrame().finally(() => {
-    isProcessingFrame = false;
-    loopTimeoutId = setTimeout(predictionLoop, 1);
-  });
-  const now2 = performance.now();
-  if (now2 - performanceAggregator.lastReportTime >= performanceAggregator.reportIntervalMs) {
-    reportPerformance();
-  }
-}
-async function processFrame() {
-  if (!modelLoaded || !video.srcObject || video.paused || video.videoWidth === 0 || !lastKnownViewportSize) {
-    await new Promise((resolve) => setTimeout(resolve, 1));
-    return;
-  }
-  const frameProcessStartTime = performance.now();
-  const now2 = performance.now();
-  fps = Math.round(1e3 / (now2 - lastFrameTime));
-  lastFrameTime = now2;
-  const sx = rect.x;
-  const sy = rect.y;
-  const sw = rect.width;
-  const sh = rect.height;
-  if (sw <= 1 || sh <= 1) return;
-  const drawStartTime = performance.now();
-  const prepareEndTime = performance.now();
-  const inferenceStartTime = performance.now();
-  try {
-    let predictions;
-    if (modelDetails.inferenceTask === "detection") {
-      predictions = await detect(modelLoaded, video, modelDetails);
-    } else {
-      predictions = await predict(modelLoaded, video, modelDetails.inputShape, 5);
+async function predictionLoop() {
+  while (isLoopRunning) {
+    const frameProcessStartTime = performance.now();
+    const now2 = performance.now();
+    fps = Math.round(1e3 / (now2 - lastFrameTime));
+    lastFrameTime = now2;
+    const sx = rect.x;
+    const sy = rect.y;
+    const sw = rect.width;
+    const sh = rect.height;
+    const drawStartTime = performance.now();
+    ctx.drawImage(video, sx, sy, sw, sh, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
+    const prepareEndTime = performance.now();
+    const inferenceStartTime = performance.now();
+    try {
+      let predictions;
+      if (modelDetails.inferenceTask === "detection") {
+        predictions = await detect(modelLoaded, offscreenCanvas, modelDetails);
+      } else {
+        predictions = await predict(modelLoaded, offscreenCanvas, modelDetails.inputShape, 5);
+      }
+      const inferenceEndTime = performance.now();
+      if (isLoopRunning && targetTabId) {
+        chrome.runtime.sendMessage({
+          type: "predictions",
+          predictions,
+          target: "worker",
+          targetTabId,
+          fps
+        }).catch((e) => {
+        });
+        const messageSentTime = performance.now();
+        performanceAggregator.frameDurations.push(inferenceEndTime - frameProcessStartTime);
+        performanceAggregator.prepDurations.push(prepareEndTime - drawStartTime);
+        performanceAggregator.inferenceDurations.push(inferenceEndTime - inferenceStartTime);
+        performanceAggregator.postProcessingDurations.push(messageSentTime - inferenceEndTime);
+        performanceAggregator.framesInPeriod++;
+      }
+    } catch (error) {
+      console.error("[Offscreen] Error during model inference:", error);
     }
-    const inferenceEndTime = performance.now();
-    if (sendframesstatus && targetTabId) {
-      chrome.runtime.sendMessage({
-        type: "predictions",
-        predictions,
-        target: "worker",
-        targetTabId,
-        fps
-      }).catch((e) => {
-      });
-      const messageSentTime = performance.now();
-      performanceAggregator.frameDurations.push(inferenceEndTime - frameProcessStartTime);
-      performanceAggregator.prepDurations.push(prepareEndTime - drawStartTime);
-      performanceAggregator.inferenceDurations.push(inferenceEndTime - inferenceStartTime);
-      performanceAggregator.postProcessingDurations.push(messageSentTime - inferenceEndTime);
-      performanceAggregator.framesInPeriod++;
+    const reportingNow = performance.now();
+    if (reportingNow - performanceAggregator.lastReportTime >= performanceAggregator.reportIntervalMs) {
+      reportPerformance();
     }
-  } catch (error) {
   }
+  console.log("[Offscreen] Prediction loop has fully stopped.");
 }
 function reportPerformance() {
   if (performanceAggregator.framesInPeriod === 0) return;

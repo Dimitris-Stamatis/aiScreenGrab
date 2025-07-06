@@ -20,12 +20,8 @@ let modelDetails = null;
 let targetTabId = null;
 let layoutWidth = null;
 let layoutHeight = null;
-let loopTimeoutId = null; // To hold the setTimeout ID
-let isProcessingFrame = false; // The "lock" to prevent concurrent processing
+let isLoopRunning = false; // A single flag to control the loop
 let lastKnownViewportSize = null; // Store the last known viewport size
-
-// --- Loop Control ---
-let sendframesstatus = false;
 
 // --- Instantaneous FPS Calculation ---
 let lastFrameTime = performance.now();
@@ -112,7 +108,7 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
 
     case 'streamStart':
       console.log("[Offscreen] streamStart received for tab:", message.targetTabId);
-      sendframesstatus = false;
+      isLoopRunning = false;
       targetTabId = message.targetTabId;
       if (stream) {
         stream.getTracks().forEach(track => track.stop());
@@ -124,6 +120,9 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
             mandatory: {
               chromeMediaSource: "tab",
               chromeMediaSourceId: message.streamId,
+              width: { ideal: 960 }, // Adjust as needed
+              height: { ideal: 540 }, // Adjust as needed
+              frameRate: { ideal: 30 }, // Adjust as needed
             },
           },
         });
@@ -152,133 +151,96 @@ video.addEventListener('loadedmetadata', () => {
 
 video.addEventListener('pause', () => {
   console.log('[Offscreen] Video paused, ensuring prediction loop stops.');
-  sendframesstatus = false;
+  stopPredictionLoop();
 });
 
 
-// --- Core Prediction Loop ---
+// --- OPTIMIZED Core Prediction Loop ---
 
 function startPredictionLoop() {
-  if (sendframesstatus) return; // Already running
+  if (isLoopRunning) {
+    console.log("[Offscreen] Prediction loop is already running.");
+    return;
+  }
   console.log("[Offscreen] Starting prediction loop.");
-  sendframesstatus = true;
-  isProcessingFrame = false; // Ensure lock is released
+  isLoopRunning = true;
   performanceAggregator.lastReportTime = performance.now();
-  predictionLoop(); // Kick off the loop
+  predictionLoop(); // Kick off the async while loop
 }
 
 function stopPredictionLoop() {
-  if (!sendframesstatus) return;
+  if (!isLoopRunning) return;
   console.log("[Offscreen] Stopping prediction loop.");
-  sendframesstatus = false;
-  if (loopTimeoutId) {
-    clearTimeout(loopTimeoutId);
-  }
+  isLoopRunning = false;
+  // No need to clear timeouts as the loop will naturally exit.
+  // Report any remaining performance data.
   if (performanceAggregator.framesInPeriod > 0) {
     reportPerformance();
   }
 }
 
-function predictionLoop() {
-  if (!sendframesstatus) {
-    console.log("[Offscreen] Prediction loop has fully stopped.");
-    return;
-  }
+async function predictionLoop() {
+  // The loop continues as long as this flag is true.
+  // The flag is controlled by start/stopPredictionLoop functions.
+  while (isLoopRunning) {
+    // Awaiting a promise that resolves on the next microtask allows the event loop
+    // to process other tasks, preventing the offscreen document from freezing.
+    //await new Promise(resolve => setTimeout(resolve, 0));
 
-  // If we are already busy with a frame, skip trying to start another one immediately.
-  // The loop will restart itself once the current frame is done.
-  if (isProcessingFrame) {
-    return;
-  }
+    const frameProcessStartTime = performance.now();
+    const now = performance.now();
+    fps = Math.round(1000 / (now - lastFrameTime));
+    lastFrameTime = now;
 
-  // Set the lock and start processing.
-  isProcessingFrame = true;
+    // --- "TWO CANVAS" DOWNSCALING AND CROPPING LOGIC ---
+    const sx = rect.x;
+    const sy = rect.y;
+    const sw = rect.width;
+    const sh = rect.height;
 
-  // We call processFrame and use .then() to schedule the next loop iteration
-  // as soon as the current one is finished, creating a tight loop.
-  processFrame().finally(() => {
-    isProcessingFrame = false;
-    // Schedule the next iteration of the loop to run as soon as possible.
-    loopTimeoutId = setTimeout(predictionLoop, 1);
-  });
+    const drawStartTime = performance.now();
+    ctx.drawImage(video, sx, sy, sw, sh, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
+    const prepareEndTime = performance.now();
+    // --- END MODIFICATION ---
 
-  // Performance reporting is now independent of the main loop timing
-  const now = performance.now();
-  if (now - performanceAggregator.lastReportTime >= performanceAggregator.reportIntervalMs) {
-    reportPerformance();
-  }
-}
+    const inferenceStartTime = performance.now();
+    try {
+      let predictions;
+      if (modelDetails.inferenceTask === 'detection') {
+        predictions = await detect(modelLoaded, offscreenCanvas, modelDetails);
+      } else {
+        predictions = await predict(modelLoaded, offscreenCanvas, modelDetails.inputShape, 5);
+      }
+      const inferenceEndTime = performance.now();
 
-async function processFrame() {
-  if (!modelLoaded || !video.srcObject || video.paused || video.videoWidth === 0 || !lastKnownViewportSize) {
-    await new Promise(resolve => setTimeout(resolve, 1));
-    return;
-  }
+      // Check the loop status again before sending the message
+      if (isLoopRunning && targetTabId) {
+        chrome.runtime.sendMessage({
+          type: 'predictions',
+          predictions,
+          target: 'worker',
+          targetTabId,
+          fps,
+        }).catch(e => { /* Potentially handle message sending failure */ });
 
-  const frameProcessStartTime = performance.now();
-  const now = performance.now();
-  fps = Math.round(1000 / (now - lastFrameTime));
-  lastFrameTime = now;
-
-  // --- MODIFICATION: "TWO CANVAS" DOWNSCALING AND CROPPING LOGIC ---
-
-  // 1. Ensure our viewport-sized canvas is the correct size.
-  /*viewportCanvas.width = lastKnownViewportSize.width;
-  viewportCanvas.height = lastKnownViewportSize.height;
-
-  // 2. Downscale the entire high-resolution video onto the smaller viewportCanvas.
-  viewportCtx.drawImage(video, 0, 0, viewportCanvas.width, viewportCanvas.height);*/
-
-  // 3. Define the crop area based on the on-screen rectangle's pixel values.
-  //    The proportional math is no longer needed as we are cropping from a source
-  //    (viewportCanvas) that has the same dimensions as the on-screen layout.
-  const sx = rect.x;
-  const sy = rect.y;
-  const sw = rect.width;
-  const sh = rect.height;
-
-  if (sw <= 1 || sh <= 1) return;
-
-  // 4. Resize the final canvas (for the model) to the size of the on-screen selection.
-  //offscreenCanvas.width = Math.floor(sw);
-  //offscreenCanvas.height = Math.floor(sh);
-
-  // 5. Crop FROM the viewportCanvas ONTO the final offscreenCanvas.
-  const drawStartTime = performance.now();
-  //ctx.drawImage(video, sx, sy, sw, sh, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
-  //const imageData = ctx.getImageData(0, 0, offscreenCanvas.width, offscreenCanvas.height);
-  const prepareEndTime = performance.now();
-  // --- END MODIFICATION ---
-
-  const inferenceStartTime = performance.now();
-  try {
-    let predictions;
-    if (modelDetails.inferenceTask === 'detection') {
-      predictions = await detect(modelLoaded, video, modelDetails);
-    } else {
-      predictions = await predict(modelLoaded, video, modelDetails.inputShape, 5);
+        const messageSentTime = performance.now();
+        performanceAggregator.frameDurations.push(inferenceEndTime - frameProcessStartTime);
+        performanceAggregator.prepDurations.push(prepareEndTime - drawStartTime);
+        performanceAggregator.inferenceDurations.push(inferenceEndTime - inferenceStartTime);
+        performanceAggregator.postProcessingDurations.push(messageSentTime - inferenceEndTime);
+        performanceAggregator.framesInPeriod++;
+      }
+    } catch (error) {
+      console.error("[Offscreen] Error during model inference:", error);
     }
-    const inferenceEndTime = performance.now();
 
-    if (sendframesstatus && targetTabId) {
-      chrome.runtime.sendMessage({
-        type: 'predictions',
-        predictions,
-        target: 'worker',
-        targetTabId,
-        fps,
-      }).catch(e => {});
-
-      const messageSentTime = performance.now();
-      performanceAggregator.frameDurations.push(inferenceEndTime - frameProcessStartTime);
-      performanceAggregator.prepDurations.push(prepareEndTime - drawStartTime);
-      performanceAggregator.inferenceDurations.push(inferenceEndTime - inferenceStartTime);
-      performanceAggregator.postProcessingDurations.push(messageSentTime - inferenceEndTime);
-      performanceAggregator.framesInPeriod++;
+    // Performance reporting
+    const reportingNow = performance.now();
+    if (reportingNow - performanceAggregator.lastReportTime >= performanceAggregator.reportIntervalMs) {
+      reportPerformance();
     }
-  } catch (error) {
-    // ... error handling ...
   }
+  console.log("[Offscreen] Prediction loop has fully stopped.");
 }
 
 function reportPerformance() {

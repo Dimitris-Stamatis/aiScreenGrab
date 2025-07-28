@@ -64,10 +64,8 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
         return;
       }
       console.log("[Offscreen] Loading model:", modelDetails);
-      const modelLoadStartTime = performance.now();
       try {
         modelLoaded = await loadModel(modelDetails.inferenceTask || modelDetails.modelType);
-        const modelLoadEndTime = performance.now();
         console.log("[Offscreen] Model loaded successfully.");
         chrome.runtime.sendMessage({ /* ... model load metric ... */ }).catch(e => console.warn(e.message));
       } catch (err) {
